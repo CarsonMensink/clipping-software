@@ -7,8 +7,6 @@ assignees: ''
 
 ---
 
-Copy the Markdown below.
-
 ## Description
 Describe what needs to be implemented and why.
 
