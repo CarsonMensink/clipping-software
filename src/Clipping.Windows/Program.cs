@@ -20,8 +20,9 @@ internal static class Program
         using var monitorSource = new ScreenMonitorSource();
         using var displayTarget = new DisplayTarget(monitorSource);
 
-        Console.WriteLine(displayTarget.GetAvailableMonitors());
-        
+        // Pumps Windows messages so display changes are delivered. #17 will pass the tray here.
+        Application.Run();
+
         return 0;
     }
 }
