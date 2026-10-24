@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Clipping.Core.Settings;
 
 namespace Clipping.Core.Tests.Settings;
@@ -65,6 +66,24 @@ public sealed class JsonSettingsStoreTests : IDisposable
         var store = new JsonSettingsStore(_filePath);
 
         Assert.Equal(new AppSettings { SelectedHotkey = "F9" }, store.Settings);
+    }
+
+    [Fact]
+    public void Constructor_WhenFileIsEditedByHand_DoesNotLetOutOfRangeBufferLengthThrough()
+    {
+        new JsonSettingsStore(_filePath).Update(s => s with { BufferLength = 60, SelectedHotkey = "F9" });
+
+        // Simulate a user editing the saved file in a text editor.
+        var json = JsonNode.Parse(File.ReadAllText(_filePath))!;
+        json["BufferLength"] = 999_999;
+        File.WriteAllText(_filePath, json.ToJsonString());
+
+        var store = new JsonSettingsStore(_filePath);
+        Assert.Equal(new AppSettings { SelectedHotkey = "F9" }, store.Settings);
+
+        // The next save writes the corrected value, so the bad one doesn't come back.
+        store.Update(s => s with { SelectedHotkey = "F10" });
+        Assert.Equal(new AppSettings().BufferLength, new JsonSettingsStore(_filePath).Settings.BufferLength);
     }
 
     [Fact]
