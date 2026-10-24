@@ -8,6 +8,10 @@
         <RootNamespace>Clipping.Windows</RootNamespace>
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
+        <UseWindowsForms>true</UseWindowsForms>
+        <!-- Without per-monitor DPI awareness, Screen bounds are scaled on high-DPI
+             displays and disagree with the dimensions of captured frames. -->
+        <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     </PropertyGroup>
 
     <ItemGroup>
