@@ -4,10 +4,6 @@ namespace Clipping.Core.Tests.Settings;
 
 public sealed class JsonSettingsStoreTests : IDisposable
 {
-    // TODO: Replace with AppSettings.MaxBufferLength once it exists.
-    private const long MinBufferLength = 15;
-    private const long MaxBufferLength = 300;
-
     private readonly string _directory;
     private readonly string _filePath;
 
@@ -59,6 +55,18 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.Equal(new AppSettings { BufferLength = 60 }, store.Settings);
     }
 
+    [Theory]
+    [InlineData(AppSettings.MinBufferLength - 1)]
+    [InlineData(AppSettings.MaxBufferLength + 1)]
+    public void Constructor_WhenBufferLengthIsOutOfRange_ResetsItToDefault(long bufferLength)
+    {
+        File.WriteAllText(_filePath, $$"""{ "BufferLength": {{bufferLength}}, "SelectedHotkey": "F9" }""");
+
+        var store = new JsonSettingsStore(_filePath);
+
+        Assert.Equal(new AppSettings { SelectedHotkey = "F9" }, store.Settings);
+    }
+
     [Fact]
     public void Update_PersistsAcrossInstances()
     {
@@ -90,8 +98,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
     [Theory]
     [InlineData(0)]
-    [InlineData(MinBufferLength - 1)]
-    [InlineData(MaxBufferLength + 1)]
+    [InlineData(AppSettings.MinBufferLength - 1)]
+    [InlineData(AppSettings.MaxBufferLength + 1)]
     [InlineData(-1)]
     [InlineData(long.MaxValue)]
     public void Update_WhenBufferLengthIsOutOfRange_Throws(long bufferLength)
@@ -105,9 +113,9 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData(MinBufferLength)]
-    [InlineData((MaxBufferLength + MinBufferLength) /2)]
-    [InlineData(MaxBufferLength)]
+    [InlineData(AppSettings.MinBufferLength)]
+    [InlineData((AppSettings.MaxBufferLength + AppSettings.MinBufferLength) /2)]
+    [InlineData(AppSettings.MaxBufferLength)]
     public void Update_WhenBufferLengthIsInRange_Accepts(long bufferLength)
     {
         var store = new JsonSettingsStore(_filePath);
@@ -123,7 +131,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
         var nestedPath = Path.Combine(_directory, "nested", "deeper", "settings.json");
         var store = new JsonSettingsStore(nestedPath);
 
-        store.Update(s => s with { BufferLength = MinBufferLength });
+        store.Update(s => s with { BufferLength = AppSettings.MinBufferLength });
 
         Assert.True(File.Exists(nestedPath));
     }
@@ -133,7 +141,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
     {
         var store = new JsonSettingsStore(_filePath);
 
-        store.Update(s => s with { BufferLength = MinBufferLength });
+        store.Update(s => s with { BufferLength = AppSettings.MinBufferLength });
 
         Assert.False(File.Exists(_filePath + ".tmp"));
     }

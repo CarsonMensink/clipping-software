@@ -39,9 +39,8 @@ public sealed class JsonSettingsStore : ISettingsStore
             updatedSettings = change.Invoke(previousSettings)
                 ?? throw new InvalidOperationException("The settings change returned null.");
 
-            // Buffer time must be between 15 second and 5 minutes
-            ArgumentOutOfRangeException.ThrowIfLessThan(updatedSettings.BufferLength, 15);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(updatedSettings.BufferLength, 300);
+            ArgumentOutOfRangeException.ThrowIfLessThan(updatedSettings.BufferLength, AppSettings.MinBufferLength);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(updatedSettings.BufferLength, AppSettings.MaxBufferLength);
 
             // Throws on failure, leaving Settings unchanged and Changed unraised.
             Save(updatedSettings);
@@ -66,7 +65,12 @@ public sealed class JsonSettingsStore : ISettingsStore
         try
         {
             var json = File.ReadAllText(filePath);
-            return JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
+
+            // A hand-edited file can hold an out-of-range buffer length; reset just that setting.
+            return settings.BufferLength is < AppSettings.MinBufferLength or > AppSettings.MaxBufferLength
+                ? settings with { BufferLength = new AppSettings().BufferLength }
+                : settings;
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {

@@ -10,6 +10,12 @@ namespace Clipping.Core.Settings;
 /// </remarks>
 public sealed record AppSettings
 {
+    /// <summary>Shortest allowed <see cref="BufferLength"/>, in seconds.</summary>
+    public const long MinBufferLength = 15;
+
+    /// <summary>Longest allowed <see cref="BufferLength"/>, in seconds.</summary>
+    public const long MaxBufferLength = 300;
+
     /// <summary>
     /// Device name of the monitor to capture, such as <c>\\.\DISPLAY1</c>.
     /// </summary>
