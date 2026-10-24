@@ -15,12 +15,16 @@ internal sealed class ScreenMonitorSource : IMonitorSource, IDisposable
     public ScreenMonitorSource()
     {
         // Covers hot-plug as well as resolution, arrangement, and primary changes.
-        // SystemEvents runs its own message thread when the caller has none.
+        // Subscribing from an STA thread makes SystemEvents deliver through that
+        // thread's message queue, so it must be running a message loop.
         SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
     }
 
     /// <inheritdoc />
-    /// <remarks>Raised on the SystemEvents thread.</remarks>
+    /// <remarks>
+    /// When created on an STA thread, as the app's UI thread is, raised on that thread
+    /// and only while it runs a message loop such as <see cref="Application.Run()"/>.
+    /// </remarks>
     public event EventHandler? MonitorsChanged;
 
     /// <inheritdoc />
