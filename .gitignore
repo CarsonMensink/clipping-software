@@ -58,3 +58,5 @@ nunit-*.xml
 
 # JetBrains Rider
 .idea/
+
+/docs
