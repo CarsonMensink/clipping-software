@@ -229,7 +229,7 @@ public sealed class EncodingLoopTests
             }
 
             Encoded.Add((frame.NativeTexture, timestamp));
-            output.TryWrite(new EncodedSample(timestamp, TimeSpan.Zero, Encoded.Count == 1, []));
+            output.TryWrite(new EncodedSample(timestamp, TimeSpan.Zero, Encoded.Count == 1, Width, Height, []));
         }
 
         public void Dispose() => IsDisposed = true;

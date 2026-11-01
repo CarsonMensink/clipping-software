@@ -8,5 +8,13 @@ namespace Clipping.Core.Encoding;
 /// <param name="IsKeyframe">
 /// Whether the frame decodes on its own. A clip must start on a keyframe.
 /// </param>
+/// <param name="Width">Width of the video in pixels.</param>
+/// <param name="Height">Height of the video in pixels.</param>
 /// <param name="Data">The compressed H.264 bytes, in Annex B format.</param>
-public sealed record EncodedSample(TimeSpan Timestamp, TimeSpan Duration, bool IsKeyframe, byte[] Data);
+public sealed record EncodedSample(
+    TimeSpan Timestamp,
+    TimeSpan Duration,
+    bool IsKeyframe,
+    int Width,
+    int Height,
+    byte[] Data);

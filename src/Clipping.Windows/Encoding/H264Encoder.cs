@@ -314,6 +314,8 @@ internal sealed class H264Encoder : IVideoEncoder
                 TimeSpan.FromTicks(sample.SampleTime),
                 TimeSpan.FromTicks(sample.SampleDuration),
                 isKeyframe,
+                _converter.Width,
+                _converter.Height,
                 bytes));
         }
         finally
