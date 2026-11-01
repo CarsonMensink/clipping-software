@@ -18,10 +18,14 @@ public class FrameSource : IFrameSource
     // and the latest frame kept for repeating while the screen is static.
     private const int TextureCount = QueueCapacity + 3;
 
+    private const DirectXPixelFormat PixelFormat = DirectXPixelFormat.B8G8R8A8UIntNormalized;
+    private const int PoolBuffers = 2;
+
     private readonly Channel<CapturedFrame> _frames;
     private readonly ISettingsStore _settings;
     private readonly IDirect3DDevice _device;
     private readonly ID3D11Device _d3dDevice;
+    private readonly ID3D11DeviceContext _context;
 
     // Guards the capture fields below against FrameArrived, which runs on a WGC worker thread.
     private readonly Lock _lock = new();
@@ -39,12 +43,14 @@ public class FrameSource : IFrameSource
 
     /// <param name="settings">Supplies the frame rate, read each time capture starts.</param>
     /// <param name="device">The shared device as WinRT sees it, for capture.</param>
-    /// <param name="d3dDevice">The same device, for creating and copying textures.</param>
-    public FrameSource(ISettingsStore settings, IDirect3DDevice device, ID3D11Device d3dDevice)
+    /// <param name="d3dDevice">The same device, for creating textures.</param>
+    /// <param name="context">The device's immediate context, for copying frames.</param>
+    public FrameSource(ISettingsStore settings, IDirect3DDevice device, ID3D11Device d3dDevice, ID3D11DeviceContext context)
     {
         _settings = settings;
         _device = device;
         _d3dDevice = d3dDevice;
+        _context = context;
         _frames = Channel.CreateBounded<CapturedFrame>(
             new BoundedChannelOptions(QueueCapacity)
             {
@@ -69,14 +75,13 @@ public class FrameSource : IFrameSource
             }
 
             _item = CaptureItemFactory.CreateForMonitor(monitor);
-            _textures = CaptureTextures.Create(_d3dDevice, _item.Size.Width, _item.Size.Height, TextureCount);
+
+            // The size of the pool's buffers and of our textures; CopyResource needs them equal.
+            var size = _item.Size;
+            _textures = CaptureTextures.Create(_d3dDevice, size.Width, size.Height, TextureCount);
 
             // Free-threaded: FrameArrived fires on a WGC worker thread.
-            var framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
-                _device,
-                DirectXPixelFormat.B8G8R8A8UIntNormalized,
-                numberOfBuffers: 2,
-                _item.Size);
+            var framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(_device, PixelFormat, PoolBuffers, size);
             _framePool = framePool;
 
             // Only touched inside the handler, under the lock.
@@ -105,9 +110,44 @@ public class FrameSource : IFrameSource
                         return;
                     }
 
-                    // Pass off to the frame handler here: _textures.TryRent →
-                    // CopyResource → TryWrite a CapturedFrame. Recreate the pool if frame.ContentSize
-                    // changed. Disposing frame (the using above) returns the buffer to the pool.
+                    if (frame.ContentSize.Width != size.Width || frame.ContentSize.Height != size.Height)
+                    {
+                        // The monitor's resolution changed. Rebuild the pool and textures at the new
+                        // size, and skip this frame: its buffer is still the old size.
+                        size = frame.ContentSize;
+                        framePool.Recreate(_device, PixelFormat, PoolBuffers, size);
+                        _textures!.Dispose();
+                        _textures = CaptureTextures.Create(_d3dDevice, size.Width, size.Height, TextureCount);
+                        return;
+                    }
+
+                    // Every texture is queued or held by the reader; drop this frame.
+                    if (!_textures!.TryRent(out var lease))
+                    {
+                        return;
+                    }
+
+                    CapturedFrame captured;
+                    try
+                    {
+                        using var source = SurfaceInterop.GetTexture(frame.Surface);
+
+                        // GPU to GPU; the frame's buffer goes back to WGC when frame is disposed.
+                        _context.CopyResource(lease.Texture, source);
+                        captured = new CapturedFrame(
+                            frame.SystemRelativeTime, size.Width, size.Height, lease.Texture.NativePointer, lease);
+                    }
+                    catch
+                    {
+                        lease.Dispose();
+                        throw;
+                    }
+
+                    // Fails only once Dispose has completed the channel.
+                    if (!_frames.Writer.TryWrite(captured))
+                    {
+                        captured.Dispose();
+                    }
                 }
             };
 
