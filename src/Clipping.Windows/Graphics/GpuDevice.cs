@@ -37,7 +37,17 @@ internal sealed class GpuDevice : IDisposable
         }
 
         Direct3DDevice = CreateWinRTDevice(Device);
+
+        using var dxgiDevice = Device.QueryInterface<IDXGIDevice>();
+        using var adapter = dxgiDevice.GetAdapter();
+        AdapterVendorId = adapter.Description.VendorId;
     }
+
+    /// <summary>
+    /// PCI vendor ID of the GPU the device runs on, such as 0x10DE for NVIDIA, for picking an
+    /// encoder on the same GPU.
+    /// </summary>
+    public uint AdapterVendorId { get; }
 
     /// <summary>
     /// The device, for code that calls D3D11 directly.

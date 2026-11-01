@@ -3,6 +3,7 @@ using Clipping.Core.Display;
 using Clipping.Core.Settings;
 using Clipping.Windows.Capture;
 using Clipping.Windows.Display;
+using Clipping.Windows.Encoding;
 using Clipping.Windows.Graphics;
 
 namespace Clipping.Windows;
@@ -25,6 +26,9 @@ internal static class Program
 
         // Shared by capture and encoding; a texture is only usable on the device that made it.
         using var gpuDevice = new GpuDevice();
+
+        // Started before, and shut down after, everything that encodes.
+        using var mediaFoundation = new MediaFoundationRuntime();
 
         using var frameSource = new FrameSource(store, gpuDevice.Direct3DDevice, gpuDevice.Device, gpuDevice.Context);
 
