@@ -68,6 +68,18 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.Equal(new AppSettings { SelectedHotkey = "F9" }, store.Settings);
     }
 
+    [Theory]
+    [InlineData(AppSettings.MinFrameRate - 1)]
+    [InlineData(AppSettings.MaxFrameRate + 1)]
+    public void Constructor_WhenFrameRateIsOutOfRange_ResetsItToDefault(int frameRate)
+    {
+        File.WriteAllText(_filePath, $$"""{ "FrameRate": {{frameRate}}, "SelectedHotkey": "F9" }""");
+
+        var store = new JsonSettingsStore(_filePath);
+
+        Assert.Equal(new AppSettings { SelectedHotkey = "F9" }, store.Settings);
+    }
+
     [Fact]
     public void Constructor_WhenFileIsEditedByHand_DoesNotLetOutOfRangeBufferLengthThrough()
     {
@@ -95,6 +107,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
             SelectedHotkey = "Ctrl+Shift+S",
             OutputDirectory = Path.Combine(_directory, "clips"),
             BufferLength = 120,
+            FrameRate = 45,
         };
         var store = new JsonSettingsStore(_filePath);
 
@@ -142,6 +155,35 @@ public sealed class JsonSettingsStoreTests : IDisposable
         store.Update(s => s with { BufferLength = bufferLength });
 
         Assert.Equal(bufferLength, store.Settings.BufferLength);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(AppSettings.MinFrameRate - 1)]
+    [InlineData(AppSettings.MaxFrameRate + 1)]
+    [InlineData(-1)]
+    [InlineData(int.MaxValue)]
+    public void Update_WhenFrameRateIsOutOfRange_Throws(int frameRate)
+    {
+        var store = new JsonSettingsStore(_filePath);
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => store.Update(s => s with { FrameRate = frameRate }));
+
+        Assert.Equal(new AppSettings(), store.Settings);
+    }
+
+    [Theory]
+    [InlineData(AppSettings.MinFrameRate)]
+    [InlineData(30)]
+    [InlineData(AppSettings.MaxFrameRate)]
+    public void Update_WhenFrameRateIsInRange_Accepts(int frameRate)
+    {
+        var store = new JsonSettingsStore(_filePath);
+
+        store.Update(s => s with { FrameRate = frameRate });
+
+        Assert.Equal(frameRate, store.Settings.FrameRate);
     }
 
     [Fact]
