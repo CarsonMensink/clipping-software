@@ -16,12 +16,13 @@ namespace Clipping.Windows.Encoding;
 /// Media Foundation asynchronous transform: it raises an event when it wants input and
 /// another when output is ready, handled here on a dedicated thread.
 /// <para>
-/// Settings suit a replay buffer: constant bitrate, a keyframe every second so a clip can
+/// Settings suit a replay buffer: constant bitrate, so a clip's size and quality are
+/// predictable whatever is on screen; a keyframe every second so a clip can
 /// start on any second, no B-frames so every input produces one output in order, and low
 /// latency so the encoder holds nothing back. One encoder handles one frame size.
 /// </para>
 /// </remarks>
-internal sealed class H264Encoder : IDisposable
+internal sealed class H264Encoder : IVideoEncoder
 {
     // NV12 textures handed to the encoder in turn. The encoder reads a texture after
     // ProcessInput returns, so one is reused only once the output for its last input is out.
@@ -42,8 +43,7 @@ internal sealed class H264Encoder : IDisposable
     private readonly bool _providesSamples;
     private readonly int _outputSize;
 
-    private readonly Channel<EncodedSample> _samples = Channel.CreateUnbounded<EncodedSample>(
-        new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
+    private readonly ChannelWriter<EncodedSample> _output;
 
     // Counts NeedInput events not yet answered, and input slots whose output is out.
     private readonly SemaphoreSlim _needInput = new(0);
@@ -61,7 +61,8 @@ internal sealed class H264Encoder : IDisposable
     /// <param name="width">Width of the captured frames.</param>
     /// <param name="height">Height of the captured frames.</param>
     /// <param name="frameRate">Frames per second.</param>
-    /// <param name="bitrate">Target bits per second.</param>
+    /// <param name="bitrate">Bits per second, spent whether or not the screen changes.</param>
+    /// <param name="output">Where encoded frames go. Never completed by the encoder.</param>
     public H264Encoder(
         IMFActivate encoderActivate,
         ID3D11Device device,
@@ -69,11 +70,14 @@ internal sealed class H264Encoder : IDisposable
         int width,
         int height,
         int frameRate,
-        int bitrate)
+        int bitrate,
+        ChannelWriter<EncodedSample> output)
     {
         ArgumentNullException.ThrowIfNull(encoderActivate);
+        ArgumentNullException.ThrowIfNull(output);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bitrate);
 
+        _output = output;
         _converter = new Nv12Converter(device, context, width, height, frameRate);
         for (var i = 0; i < InputSlots; i++)
         {
@@ -95,11 +99,11 @@ internal sealed class H264Encoder : IDisposable
         _transform.ProcessMessage(MessageSetD3DManager, (UIntPtr)(ulong)_deviceManager.NativePointer);
 
         // An encoder takes its output type first, then an input type that fits it.
-        using (var output = CreateVideoType(VideoFormatGuids.H264, frameRate))
+        using (var outputType = CreateVideoType(VideoFormatGuids.H264, frameRate))
         {
-            output.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)bitrate);
-            output.Set(MediaTypeAttributeKeys.Mpeg2Profile, ProfileHigh);
-            _transform.SetOutputType(0, output, 0);
+            outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)bitrate);
+            outputType.Set(MediaTypeAttributeKeys.Mpeg2Profile, ProfileHigh);
+            _transform.SetOutputType(0, outputType, 0);
         }
 
         // Set once the encoder knows it is producing H.264; some refuse these before that.
@@ -111,9 +115,9 @@ internal sealed class H264Encoder : IDisposable
             (CodecApi.GopSize, (uint)frameRate),
             (CodecApi.LowLatencyMode, true));
 
-        using (var input = CreateVideoType(VideoFormatGuids.NV12, frameRate))
+        using (var inputType = CreateVideoType(VideoFormatGuids.NV12, frameRate))
         {
-            _transform.SetInputType(0, input, 0);
+            _transform.SetInputType(0, inputType, 0);
         }
 
         var streamInfo = _transform.GetOutputStreamInfo(0);
@@ -141,12 +145,6 @@ internal sealed class H264Encoder : IDisposable
     }
 
     /// <summary>
-    /// The encoded frames, in order. Completes after <see cref="Dispose"/>, or with the error
-    /// if the encoder fails.
-    /// </summary>
-    public ChannelReader<EncodedSample> Samples => _samples.Reader;
-
-    /// <summary>
     /// Width of the encoded video.
     /// </summary>
     public int Width => _converter.Width;
@@ -163,12 +161,10 @@ internal sealed class H264Encoder : IDisposable
     public static int SuggestBitrate(int width, int height, int frameRate) =>
         (int)Math.Min(width * (long)height * frameRate * 9 / 100, int.MaxValue);
 
-    /// <summary>
-    /// Converts and submits a frame, waiting until the encoder is ready for it.
-    /// </summary>
-    /// <param name="frame">A frame of the size this encoder was made for. Still owned by the caller.</param>
-    /// <param name="timestamp">When the frame is shown, usually its capture time.</param>
-    /// <exception cref="InvalidOperationException">The encoder failed; see the inner exception.</exception>
+    /// <inheritdoc/>
+    /// <remarks>
+    /// Converts the frame on the GPU before returning, so the caller can release it right after.
+    /// </remarks>
     public void Encode(CapturedFrame frame, TimeSpan timestamp)
     {
         ArgumentNullException.ThrowIfNull(frame);
@@ -178,18 +174,26 @@ internal sealed class H264Encoder : IDisposable
         _needInput.Wait();
         ThrowIfFailed();
 
-        var texture = _inputs[_nextSlot];
-        _nextSlot = (_nextSlot + 1) % InputSlots;
+        try
+        {
+            var texture = _inputs[_nextSlot];
+            _nextSlot = (_nextSlot + 1) % InputSlots;
 
-        _converter.Convert(frame, texture);
+            _converter.Convert(frame, texture);
 
-        using var buffer = MediaFactory.MFCreateDXGISurfaceBuffer(typeof(ID3D11Texture2D).GUID, texture, 0, false);
-        using var sample = MediaFactory.MFCreateSample();
-        sample.AddBuffer(buffer);
-        sample.SampleTime = timestamp.Ticks;
-        sample.SampleDuration = _frameDuration;
+            using var buffer = MediaFactory.MFCreateDXGISurfaceBuffer(typeof(ID3D11Texture2D).GUID, texture, 0, false);
+            using var sample = MediaFactory.MFCreateSample();
+            sample.AddBuffer(buffer);
+            sample.SampleTime = timestamp.Ticks;
+            sample.SampleDuration = _frameDuration;
 
-        _transform.ProcessInput(0, sample, 0);
+            _transform.ProcessInput(0, sample, 0);
+        }
+        catch (SharpGen.Runtime.SharpGenException e)
+        {
+            _failure = e;
+            ThrowIfFailed();
+        }
     }
 
     /// <summary>
@@ -221,7 +225,6 @@ internal sealed class H264Encoder : IDisposable
         // Ends a GetEvent still waiting on the event thread.
         MediaFactory.MFShutdownObject(_transform);
         _eventThread.Join(TimeSpan.FromSeconds(2));
-        _samples.Writer.TryComplete(_failure);
 
         _events.Dispose();
         _transform.Dispose();
@@ -268,7 +271,6 @@ internal sealed class H264Encoder : IDisposable
         catch (Exception e)
         {
             _failure = e;
-            _samples.Writer.TryComplete(e);
             _drained.Set();
 
             // Wakes an Encode waiting for input, so it sees the failure.
@@ -308,7 +310,7 @@ internal sealed class H264Encoder : IDisposable
             }
 
             var isKeyframe = IsKeyframe(sample);
-            _samples.Writer.TryWrite(new EncodedSample(
+            _output.TryWrite(new EncodedSample(
                 TimeSpan.FromTicks(sample.SampleTime),
                 TimeSpan.FromTicks(sample.SampleDuration),
                 isKeyframe,

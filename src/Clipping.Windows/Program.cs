@@ -1,5 +1,6 @@
 ﻿using Clipping.Core.Capture;
 using Clipping.Core.Display;
+using Clipping.Core.Encoding;
 using Clipping.Core.Settings;
 using Clipping.Windows.Capture;
 using Clipping.Windows.Display;
@@ -36,9 +37,48 @@ internal static class Program
         using var captureCoordinator = new CaptureCoordinator(displayTarget, frameSource);
         captureCoordinator.Start();
 
+        using var encoderActivate = FindEncoder(gpuDevice);
+        using var encodingLoop = new EncodingLoop(
+            frameSource.Frames,
+            (width, height, frameRate, output) => new H264Encoder(
+                encoderActivate,
+                gpuDevice.Device,
+                gpuDevice.Context,
+                width,
+                height,
+                frameRate,
+                H264Encoder.SuggestBitrate(width, height, frameRate),
+                output),
+            store.Settings.FrameRate);
+
+        using var stopEncoding = new CancellationTokenSource();
+        var encoding = Task.Run(() => encodingLoop.RunAsync(stopEncoding.Token));
+
         // Pumps Windows messages so display changes are delivered. #17 will pass the tray here.
         Application.Run();
 
+        stopEncoding.Cancel();
+        encoding.Wait();
+
         return 0;
+    }
+
+    /// <summary>
+    /// The best hardware H.264 encoder on the GPU that captures, so it can read its textures.
+    /// </summary>
+    private static Vortice.MediaFoundation.IMFActivate FindEncoder(GpuDevice gpuDevice)
+    {
+        var encoders = HardwareEncoders.FindH264(gpuDevice.AdapterVendorId);
+        if (encoders.Count == 0)
+        {
+            throw new InvalidOperationException("The GPU has no hardware H.264 encoder.");
+        }
+
+        foreach (var spare in encoders.Skip(1))
+        {
+            spare.Dispose();
+        }
+
+        return encoders[0];
     }
 }
