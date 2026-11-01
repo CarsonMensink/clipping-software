@@ -16,6 +16,12 @@ public sealed record AppSettings
     /// <summary>Longest allowed <see cref="BufferLength"/>, in seconds.</summary>
     public const long MaxBufferLength = 300;
 
+    /// <summary>Lowest allowed <see cref="FrameRate"/>, in frames per second.</summary>
+    public const int MinFrameRate = 15;
+
+    /// <summary>Highest allowed <see cref="FrameRate"/>, in frames per second.</summary>
+    public const int MaxFrameRate = 60;
+
     /// <summary>
     /// Device name of the monitor to capture, such as <c>\\.\DISPLAY1</c>.
     /// </summary>
@@ -43,4 +49,14 @@ public sealed record AppSettings
     /// </summary>
     /// <value>Defaults to <c>30s</c></value>
     public long BufferLength { get; init; } = 30;
+
+    /// <summary>
+    /// Target number of frames captured per second.
+    /// </summary>
+    /// <remarks>
+    /// A ceiling, not a guarantee: capture cannot run faster than the monitor's
+    /// refresh rate.
+    /// </remarks>
+    /// <value>Defaults to <c>60</c>.</value>
+    public int FrameRate { get; init; } = 30;
 }

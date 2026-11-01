@@ -22,7 +22,7 @@ public sealed class JsonSettingsStore : ISettingsStore
         Settings = Load(filePath);
     }
 
-    /// <inheritdoc />
+    /// <inheritdoc />so 
     public event EventHandler<SettingsChangedEventArgs>? Changed;
 
     /// <inheritdoc />
@@ -41,6 +41,8 @@ public sealed class JsonSettingsStore : ISettingsStore
 
             ArgumentOutOfRangeException.ThrowIfLessThan(updatedSettings.BufferLength, AppSettings.MinBufferLength);
             ArgumentOutOfRangeException.ThrowIfGreaterThan(updatedSettings.BufferLength, AppSettings.MaxBufferLength);
+            ArgumentOutOfRangeException.ThrowIfLessThan(updatedSettings.FrameRate, AppSettings.MinFrameRate);
+            ArgumentOutOfRangeException.ThrowIfGreaterThan(updatedSettings.FrameRate, AppSettings.MaxFrameRate);
 
             // Throws on failure, leaving Settings unchanged and Changed unraised.
             Save(updatedSettings);
@@ -67,10 +69,19 @@ public sealed class JsonSettingsStore : ISettingsStore
             var json = File.ReadAllText(filePath);
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
 
-            // A hand-edited file can hold an out-of-range buffer length; reset just that setting.
-            return settings.BufferLength is < AppSettings.MinBufferLength or > AppSettings.MaxBufferLength
-                ? settings with { BufferLength = new AppSettings().BufferLength }
-                : settings;
+            // A hand-edited file can hold out-of-range values; reset just those settings.
+            var defaults = new AppSettings();
+            if (settings.BufferLength is < AppSettings.MinBufferLength or > AppSettings.MaxBufferLength)
+            {
+                settings = settings with { BufferLength = defaults.BufferLength };
+            }
+
+            if (settings.FrameRate is < AppSettings.MinFrameRate or > AppSettings.MaxFrameRate)
+            {
+                settings = settings with { FrameRate = defaults.FrameRate };
+            }
+
+            return settings;
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {
