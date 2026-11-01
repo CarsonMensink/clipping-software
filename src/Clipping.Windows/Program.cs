@@ -26,7 +26,7 @@ internal static class Program
         // Shared by capture and encoding; a texture is only usable on the device that made it.
         using var gpuDevice = new GpuDevice();
 
-        using var frameSource = new FrameSource(gpuDevice.Direct3DDevice);
+        using var frameSource = new FrameSource(gpuDevice.Direct3DDevice, gpuDevice.Device);
 
         // Follows the selected monitor; disposed before frameSource, since it calls into it.
         using var captureCoordinator = new CaptureCoordinator(displayTarget, frameSource);
