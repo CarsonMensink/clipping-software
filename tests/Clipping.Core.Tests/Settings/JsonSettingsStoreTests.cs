@@ -107,7 +107,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
             SelectedHotkey = "Ctrl+Shift+S",
             OutputDirectory = Path.Combine(_directory, "clips"),
             BufferLength = 120,
-            FrameRate = 30,
+            FrameRate = 45,
         };
         var store = new JsonSettingsStore(_filePath);
 

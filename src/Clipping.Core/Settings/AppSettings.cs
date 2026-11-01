@@ -57,6 +57,6 @@ public sealed record AppSettings
     /// A ceiling, not a guarantee: capture cannot run faster than the monitor's
     /// refresh rate.
     /// </remarks>
-    /// <value>Defaults to <c>60</c>.</value>
+    /// <value>Defaults to <c>30</c>.</value>
     public int FrameRate { get; init; } = 30;
 }
