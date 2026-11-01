@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Clipping.Core.Capture;
 using Clipping.Core.Display;
+using Clipping.Core.Settings;
 using Clipping.Windows.Graphics;
 using Vortice.Direct3D11;
 using Windows.Graphics.Capture;
@@ -18,6 +19,7 @@ public class FrameSource : IFrameSource
     private const int TextureCount = QueueCapacity + 3;
 
     private readonly Channel<CapturedFrame> _frames;
+    private readonly ISettingsStore _settings;
     private readonly IDirect3DDevice _device;
     private readonly ID3D11Device _d3dDevice;
 
@@ -35,10 +37,12 @@ public class FrameSource : IFrameSource
         get { return _frames.Reader; }
     }
 
+    /// <param name="settings">Supplies the frame rate, read each time capture starts.</param>
     /// <param name="device">The shared device as WinRT sees it, for capture.</param>
     /// <param name="d3dDevice">The same device, for creating and copying textures.</param>
-    public FrameSource(IDirect3DDevice device, ID3D11Device d3dDevice)
+    public FrameSource(ISettingsStore settings, IDirect3DDevice device, ID3D11Device d3dDevice)
     {
+        _settings = settings;
         _device = device;
         _d3dDevice = d3dDevice;
         _frames = Channel.CreateBounded<CapturedFrame>(
@@ -75,6 +79,9 @@ public class FrameSource : IFrameSource
                 _item.Size);
             _framePool = framePool;
 
+            // Only touched inside the handler, under the lock.
+            var gate = new FrameRateGate(_settings.Settings.FrameRate);
+
             framePool.FrameArrived += (_, _) =>
             {
                 lock (_lock)
@@ -92,7 +99,13 @@ public class FrameSource : IFrameSource
                         return;
                     }
 
-                    // Pass off to the frame handler here: frame-rate gate → _textures.TryRent →
+                    // Skips frames that arrive faster than the frame rate, before they cost a copy.
+                    if (!gate.TryPass(frame.SystemRelativeTime))
+                    {
+                        return;
+                    }
+
+                    // Pass off to the frame handler here: _textures.TryRent →
                     // CopyResource → TryWrite a CapturedFrame. Recreate the pool if frame.ContentSize
                     // changed. Disposing frame (the using above) returns the buffer to the pool.
                 }
