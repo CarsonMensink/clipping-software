@@ -20,4 +20,9 @@
         <ProjectReference Include="..\Clipping.Core\Clipping.Core.csproj" />
     </ItemGroup>
 
+    <ItemGroup>
+        <!-- D3D11 and DXGI bindings; pulls in Vortice.DXGI. -->
+        <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    </ItemGroup>
+
 </Project>
