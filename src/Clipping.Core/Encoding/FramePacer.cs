@@ -16,6 +16,11 @@ namespace Clipping.Core.Encoding;
 /// before saving.
 /// </para>
 /// <para>
+/// One call repeats at most one second's worth of frames, the most recent ones. A longer gap
+/// means the clock jumped, such as across sleep, and is left as a gap in the timestamps
+/// rather than filled with work nobody will watch.
+/// </para>
+/// <para>
 /// Works on timestamps only; it never holds frames. Not thread-safe; the caller serializes
 /// calls.
 /// </para>
@@ -96,6 +101,7 @@ public sealed class FramePacer
 
     private TimeSpan[] SlotTimes(long from, long to)
     {
+        from = Math.Max(from, to - _frameRate);
         var times = new TimeSpan[Math.Max(to - from, 0)];
         for (var i = 0; i < times.Length; i++)
         {

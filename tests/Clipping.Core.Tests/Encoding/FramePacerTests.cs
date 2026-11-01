@@ -155,6 +155,31 @@ public sealed class FramePacerTests
         Assert.Empty(pacer.FillUntil(At(2)));
     }
 
+    [Fact]
+    public void Place_AfterVeryLongGap_RepeatsOnlyTheLastSecond()
+    {
+        var pacer = new FramePacer(60);
+        pacer.Place(_start);
+
+        var placement = pacer.Place(At(60 * 60 * 60));
+
+        Assert.Equal(60, placement.Repeats.Count);
+        Assert.Equal(At(60 * 60 * 60 - 60), placement.Repeats[0]);
+        Assert.Equal(At(60 * 60 * 60), placement.Time);
+    }
+
+    [Fact]
+    public void FillUntil_AfterVeryLongGap_RepeatsOnlyTheLastSecond()
+    {
+        var pacer = new FramePacer(60);
+        pacer.Place(_start);
+
+        var repeats = pacer.FillUntil(At(60 * 60 * 60));
+
+        Assert.Equal(60, repeats.Count);
+        Assert.Equal(At(60 * 60 * 60), repeats[^1]);
+    }
+
     [Theory]
     [InlineData(24, 30)]
     [InlineData(37, 60)]
