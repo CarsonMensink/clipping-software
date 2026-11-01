@@ -11,8 +11,8 @@ namespace Clipping.Core.Encoding;
 /// the timeline calls for followed by the frame itself. The latest frame is kept so it can be
 /// repeated: when it arrives, and as time passes while the screen is idle.
 /// <para>
-/// A change in frame size starts a new encoder and a new timeline. If the encoder fails, it
-/// is dropped, and the next frame starts a new one.
+/// A change in frame size starts a new encoder and a new timeline. If the encoder fails, or
+/// fails to start, it is dropped, and the next frame starts a new one.
 /// </para>
 /// <para>
 /// Frame timestamps must be on the clock of the <see cref="TimeProvider"/>'s
@@ -140,7 +140,17 @@ public sealed class EncodingLoop : IDisposable
         if (_encoder is null || frame.Width != _encoderWidth || frame.Height != _encoderHeight)
         {
             DropEncoder();
-            _encoder = _createEncoder(frame.Width, frame.Height, _frameRate, _samples.Writer);
+            try
+            {
+                _encoder = _createEncoder(frame.Width, frame.Height, _frameRate, _samples.Writer);
+            }
+            catch (InvalidOperationException)
+            {
+                // The next frame tries again.
+                frame.Dispose();
+                return;
+            }
+
             _encoderWidth = frame.Width;
             _encoderHeight = frame.Height;
             _pacer = new FramePacer(_frameRate);

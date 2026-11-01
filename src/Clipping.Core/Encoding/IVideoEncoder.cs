@@ -32,4 +32,5 @@ public interface IVideoEncoder : IDisposable
 /// <param name="height">Height of the frames.</param>
 /// <param name="frameRate">Frames per second of the video.</param>
 /// <param name="output">Where the encoder writes encoded frames.</param>
+/// <exception cref="InvalidOperationException">The encoder couldn't be started.</exception>
 public delegate IVideoEncoder VideoEncoderFactory(int width, int height, int frameRate, ChannelWriter<EncodedSample> output);

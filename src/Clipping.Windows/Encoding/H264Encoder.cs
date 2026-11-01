@@ -34,6 +34,7 @@ internal sealed class H264Encoder : IVideoEncoder
     // eAVEncH264VProfile_High.
     private const uint ProfileHigh = 100;
 
+    private readonly IMFActivate _activate;
     private readonly IMFTransform _transform;
     private readonly IMFMediaEventGenerator _events;
     private readonly IMFDXGIDeviceManager _deviceManager;
@@ -55,7 +56,10 @@ internal sealed class H264Encoder : IVideoEncoder
     private volatile Exception? _failure;
     private bool _disposed;
 
-    /// <param name="encoderActivate">A hardware H.264 encoder on the same GPU as <paramref name="device"/>.</param>
+    /// <param name="encoderActivate">
+    /// A hardware H.264 encoder on the same GPU as <paramref name="device"/>. Can be reused for
+    /// the next encoder once this one is disposed.
+    /// </param>
     /// <param name="device">The device the frames' textures live on.</param>
     /// <param name="context">Its immediate context.</param>
     /// <param name="width">Width of the captured frames.</param>
@@ -63,6 +67,7 @@ internal sealed class H264Encoder : IVideoEncoder
     /// <param name="frameRate">Frames per second.</param>
     /// <param name="bitrate">Bits per second, spent whether or not the screen changes.</param>
     /// <param name="output">Where encoded frames go. Never completed by the encoder.</param>
+    /// <exception cref="InvalidOperationException">The encoder couldn't be started.</exception>
     public H264Encoder(
         IMFActivate encoderActivate,
         ID3D11Device device,
@@ -78,58 +83,68 @@ internal sealed class H264Encoder : IVideoEncoder
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bitrate);
 
         _output = output;
-        _converter = new Nv12Converter(device, context, width, height, frameRate);
-        for (var i = 0; i < InputSlots; i++)
-        {
-            _inputs[i] = _converter.CreateTarget();
-        }
-
+        _activate = encoderActivate;
         _frameDuration = TimeSpan.TicksPerSecond / frameRate;
-
-        encoderActivate.ActivateObject<IMFTransform>(typeof(IMFTransform).GUID, out var transform).CheckError();
-        _transform = transform!;
-
-        // Asynchronous transforms refuse every call until unlocked.
-        _transform.Attributes.Set(TransformAttributeKeys.TransformAsyncUnlock, 1u);
-        _events = _transform.QueryInterface<IMFMediaEventGenerator>();
-
-        // Lets the encoder read our textures directly.
-        _deviceManager = MediaFactory.MFCreateDXGIDeviceManager();
-        _deviceManager.ResetDevice(device).CheckError();
-        _transform.ProcessMessage(MessageSetD3DManager, (UIntPtr)(ulong)_deviceManager.NativePointer);
-
-        // An encoder takes its output type first, then an input type that fits it.
-        using (var outputType = CreateVideoType(VideoFormatGuids.H264, frameRate))
-        {
-            outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)bitrate);
-            outputType.Set(MediaTypeAttributeKeys.Mpeg2Profile, ProfileHigh);
-            _transform.SetOutputType(0, outputType, 0);
-        }
-
-        // Set once the encoder knows it is producing H.264; some refuse these before that.
-        // Low latency also turns off B-frames, which NVENC won't take as a separate setting.
-        CodecApi.Set(
-            _transform,
-            (CodecApi.RateControlMode, CodecApi.RateControlCbr),
-            (CodecApi.MeanBitRate, (uint)bitrate),
-            (CodecApi.GopSize, (uint)frameRate),
-            (CodecApi.LowLatencyMode, true));
-
-        using (var inputType = CreateVideoType(VideoFormatGuids.NV12, frameRate))
-        {
-            _transform.SetInputType(0, inputType, 0);
-        }
-
-        var streamInfo = _transform.GetOutputStreamInfo(0);
-        _providesSamples = (streamInfo.Flags & (int)(OutputStreamInfoFlags.OutputStreamProvidesSamples
-            | OutputStreamInfoFlags.OutputStreamCanProvideSamples)) != 0;
-        _outputSize = Math.Max(streamInfo.Size, 1);
-
         _eventThread = new Thread(RunEvents) { IsBackground = true, Name = "H.264 encoder events" };
-        _eventThread.Start();
 
-        _transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
-        _transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
+        try
+        {
+            _converter = new Nv12Converter(device, context, width, height, frameRate);
+            for (var i = 0; i < InputSlots; i++)
+            {
+                _inputs[i] = _converter.CreateTarget();
+            }
+
+            encoderActivate.ActivateObject<IMFTransform>(typeof(IMFTransform).GUID, out var transform).CheckError();
+            _transform = transform!;
+
+            // Asynchronous transforms refuse every call until unlocked.
+            _transform.Attributes.Set(TransformAttributeKeys.TransformAsyncUnlock, 1u);
+            _events = _transform.QueryInterface<IMFMediaEventGenerator>();
+
+            // Lets the encoder read our textures directly.
+            _deviceManager = MediaFactory.MFCreateDXGIDeviceManager();
+            _deviceManager.ResetDevice(device).CheckError();
+            _transform.ProcessMessage(MessageSetD3DManager, (UIntPtr)(ulong)_deviceManager.NativePointer);
+
+            // An encoder takes its output type first, then an input type that fits it.
+            using (var outputType = CreateVideoType(VideoFormatGuids.H264, frameRate))
+            {
+                outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)bitrate);
+                outputType.Set(MediaTypeAttributeKeys.Mpeg2Profile, ProfileHigh);
+                _transform.SetOutputType(0, outputType, 0);
+            }
+
+            // Set once the encoder knows it is producing H.264; some refuse these before that.
+            // Low latency also turns off B-frames, which NVENC won't take as a separate setting.
+            CodecApi.Set(
+                _transform,
+                (CodecApi.RateControlMode, CodecApi.RateControlCbr),
+                (CodecApi.MeanBitRate, (uint)bitrate),
+                (CodecApi.GopSize, (uint)frameRate),
+                (CodecApi.LowLatencyMode, true));
+
+            using (var inputType = CreateVideoType(VideoFormatGuids.NV12, frameRate))
+            {
+                _transform.SetInputType(0, inputType, 0);
+            }
+
+            var streamInfo = _transform.GetOutputStreamInfo(0);
+            _providesSamples = (streamInfo.Flags & (int)(OutputStreamInfoFlags.OutputStreamProvidesSamples
+                | OutputStreamInfoFlags.OutputStreamCanProvideSamples)) != 0;
+            _outputSize = Math.Max(streamInfo.Size, 1);
+
+            _eventThread.Start();
+
+            _transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
+            _transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
+        }
+        catch (Exception e) when (e is SharpGen.Runtime.SharpGenException or InvalidOperationException)
+        {
+            _disposed = true;
+            Release();
+            throw new InvalidOperationException($"Couldn't start the encoder: {e.Message}", e);
+        }
 
         IMFMediaType CreateVideoType(Guid subtype, int rate)
         {
@@ -222,19 +237,37 @@ internal sealed class H264Encoder : IVideoEncoder
             }
         }
 
-        // Ends a GetEvent still waiting on the event thread.
-        MediaFactory.MFShutdownObject(_transform);
-        _eventThread.Join(TimeSpan.FromSeconds(2));
+        Release();
+    }
 
-        _events.Dispose();
-        _transform.Dispose();
-        _deviceManager.Dispose();
-        foreach (var texture in _inputs)
+    // Also cleans up after a constructor that failed partway, so any field may still be unset.
+    private void Release()
+    {
+        if (_transform is not null)
         {
-            texture.Dispose();
+            // Ends a GetEvent still waiting on the event thread.
+            MediaFactory.MFShutdownObject(_transform);
         }
 
-        _converter.Dispose();
+        if (_eventThread.ThreadState != ThreadState.Unstarted)
+        {
+            _eventThread.Join(TimeSpan.FromSeconds(2));
+        }
+
+        _events?.Dispose();
+        _transform?.Dispose();
+
+        // Without this the activate keeps handing back the encoder just shut down, and the
+        // next encoder, after a size change, fails to start.
+        _activate.ShutdownObject();
+
+        _deviceManager?.Dispose();
+        foreach (var texture in _inputs)
+        {
+            texture?.Dispose();
+        }
+
+        _converter?.Dispose();
         _needInput.Dispose();
         _freeSlots.Dispose();
         _drained.Dispose();

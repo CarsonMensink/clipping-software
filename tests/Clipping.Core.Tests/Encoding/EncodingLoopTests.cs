@@ -12,6 +12,7 @@ public sealed class EncodingLoopTests
     private readonly Channel<CapturedFrame> _frames = Channel.CreateUnbounded<CapturedFrame>();
     private readonly List<FakeEncoder> _encoders = [];
     private readonly List<FakeOwner> _owners = [];
+    private bool _failNextCreate;
 
     [Fact]
     public void Process_FirstFrame_CreatesEncoderOfItsSizeAndEncodesIt()
@@ -93,6 +94,21 @@ public sealed class EncodingLoopTests
         Assert.True(_owners[0].IsDisposed);
         Assert.True(_owners[1].IsDisposed);
         Assert.Equal([(3, At(2))], _encoders[1].Encoded);
+    }
+
+    [Fact]
+    public void Process_WhenEncoderFailsToStart_DropsFrameAndNextFrameTriesAgain()
+    {
+        using var loop = CreateLoop();
+        loop.Process(Frame(1, At(0)));
+        _failNextCreate = true;
+
+        loop.Process(Frame(2, At(5), 1920, 1080));
+        loop.Process(Frame(3, At(6), 1920, 1080));
+
+        Assert.True(_encoders[0].IsDisposed);
+        Assert.True(_owners[1].IsDisposed);
+        Assert.Equal([(3, At(6))], _encoders[1].Encoded);
     }
 
     [Fact]
@@ -192,6 +208,12 @@ public sealed class EncodingLoopTests
 
     private IVideoEncoder CreateEncoder(int width, int height, int frameRate, ChannelWriter<EncodedSample> output)
     {
+        if (_failNextCreate)
+        {
+            _failNextCreate = false;
+            throw new InvalidOperationException("Encoder failed to start.");
+        }
+
         var encoder = new FakeEncoder(width, height, frameRate, output);
         _encoders.Add(encoder);
         return encoder;
