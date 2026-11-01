@@ -33,8 +33,8 @@ public sealed record AppSettings
     /// <summary>
     /// Key combination that saves the current clip.
     /// </summary>
-    /// <value>Defaults to <c>Alt+F10</c>.</value>
-    public string SelectedHotkey { get; init; } = "Alt+F10";
+    /// <value>Defaults to <c>Alt+P</c>.</value>
+    public string SelectedHotkey { get; init; } = "Alt+P";
     
     /// <summary>
     /// Root folder that clips are saved under.
@@ -57,6 +57,6 @@ public sealed record AppSettings
     /// A ceiling, not a guarantee: capture cannot run faster than the monitor's
     /// refresh rate.
     /// </remarks>
-    /// <value>Defaults to <c>30</c>.</value>
-    public int FrameRate { get; init; } = 30;
+    /// <value>Defaults to <c>60</c>.</value>
+    public int FrameRate { get; init; } = 60;
 }
