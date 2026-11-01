@@ -30,35 +30,24 @@ internal sealed class Mp4ClipWriter : IClipWriter
         return Task.Run(() => WriteOrDelete(clip, path, cancellationToken), cancellationToken);
     }
 
+    // Dispose the native writer before failed-file cleanup tries to remove its output.
     private static void WriteOrDelete(ClipSnapshot clip, string path, CancellationToken cancellationToken)
     {
-        try
-        {
-            Write(clip, path, cancellationToken);
-        }
-        catch (Exception e) when (e is SharpGen.Runtime.SharpGenException or COMException or OperationCanceledException)
-        {
-            // The sink writer is released by now, so the partial file can go.
-            File.Delete(path);
-            if (e is OperationCanceledException)
-            {
-                throw;
-            }
-
-            throw new IOException($"Couldn't write the clip: {e.Message}", e);
-        }
+        ClipFileWrite.WriteOrDelete(path, () => Write(clip, path, cancellationToken));
     }
 
+    // Compressed samples pass through unchanged, with timestamps rebased for standalone playback.
     private static void Write(ClipSnapshot clip, string path, CancellationToken cancellationToken)
     {
         var first = clip.Samples[0];
 
         using var attributes = MediaFactory.MFCreateAttributes(1);
         attributes.Set(TranscodeAttributeKeys.TranscodeContainertype, TranscodeContainerTypeGuids.Mpeg4);
+        // Validate codec headers before opening a file that would need cleanup on failure.
+        using var type = CreateMediaType(clip);
         using var writer = MediaFactory.MFCreateSinkWriterFromURL(path, null!, attributes);
 
         // The same type in and out tells the sink writer to pass samples through untouched.
-        using var type = CreateMediaType(clip);
         var stream = writer.AddStream(type);
         writer.SetInputMediaType(stream, type, null!);
         writer.BeginWriting();
@@ -93,6 +82,7 @@ internal sealed class Mp4ClipWriter : IClipWriter
         writer.Finalize();
     }
 
+    // The MP4 header carries retained codec parameters even when the first saved GOP omits them.
     private static IMFMediaType CreateMediaType(ClipSnapshot clip)
     {
         var first = clip.Samples[0];
@@ -102,72 +92,27 @@ internal sealed class Mp4ClipWriter : IClipWriter
         var seconds = Math.Max(clip.Duration.TotalSeconds, 0.001);
         var bitrate = (uint)Math.Min(clip.Samples.Sum(s => (long)s.Data.Length) * 8 / seconds, uint.MaxValue);
 
+        var header = first.SequenceHeader ?? new H264ParameterSets().Update(first.Data)
+            ?? throw new IOException("The clip has no complete SPS/PPS sequence header.");
         var type = MediaFactory.MFCreateMediaType();
-        type.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-        type.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
-        type.Set(MediaTypeAttributeKeys.FrameSize, Pack(first.Width, first.Height));
-        type.Set(MediaTypeAttributeKeys.FrameRate, Pack(frameRate, 1));
-        type.Set(MediaTypeAttributeKeys.PixelAspectRatio, Pack(1, 1));
-        type.Set(MediaTypeAttributeKeys.InterlaceMode, (uint)VideoInterlaceMode.Progressive);
-        type.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
-
-        // The MP4 header needs the stream's SPS and PPS, which the encoder repeats on every keyframe.
-        type.SetBlob(MediaTypeAttributeKeys.MpegSequenceHeader, SequenceHeader(first.Data));
-        return type;
-    }
-
-    /// <summary>
-    /// The SPS and PPS units from an Annex B keyframe, each with its start code.
-    /// </summary>
-    private static byte[] SequenceHeader(byte[] keyframe)
-    {
-        var header = new List<byte>();
-        foreach (var (start, length) in NalUnits(keyframe))
+        try
         {
-            // Type 7 is the SPS and 8 the PPS.
-            var type = keyframe[start] & 0x1F;
-            if (type is 7 or 8)
-            {
-                header.AddRange([0, 0, 0, 1]);
-                header.AddRange(keyframe.AsSpan(start, length).ToArray());
-            }
+            type.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
+            type.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
+            type.Set(MediaTypeAttributeKeys.FrameSize, Pack(first.Width, first.Height));
+            type.Set(MediaTypeAttributeKeys.FrameRate, Pack(frameRate, 1));
+            type.Set(MediaTypeAttributeKeys.PixelAspectRatio, Pack(1, 1));
+            type.Set(MediaTypeAttributeKeys.InterlaceMode, (uint)VideoInterlaceMode.Progressive);
+            type.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
+
+            // Cached headers survive eviction of the encoder's first GOP.
+            type.SetBlob(MediaTypeAttributeKeys.MpegSequenceHeader, header);
+            return type;
         }
-
-        if (header.Count == 0)
+        catch
         {
-            throw new IOException("The first keyframe carries no SPS or PPS.");
-        }
-
-        return header.ToArray();
-    }
-
-    /// <summary>
-    /// The start and length of each NAL unit in an Annex B stream, after its start code.
-    /// </summary>
-    private static IEnumerable<(int Start, int Length)> NalUnits(byte[] data)
-    {
-        var start = -1;
-        for (var i = 0; i + 2 < data.Length; i++)
-        {
-            if (data[i] != 0 || data[i + 1] != 0 || data[i + 2] != 1)
-            {
-                continue;
-            }
-
-            if (start >= 0)
-            {
-                // A four-byte start code puts one more zero before the 00 00 01.
-                var end = i > 0 && data[i - 1] == 0 ? i - 1 : i;
-                yield return (start, end - start);
-            }
-
-            start = i + 3;
-            i += 2;
-        }
-
-        if (start >= 0 && start < data.Length)
-        {
-            yield return (start, data.Length - start);
+            type.Dispose();
+            throw;
         }
     }
 

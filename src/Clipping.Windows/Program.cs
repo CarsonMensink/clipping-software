@@ -52,6 +52,9 @@ internal static class Program
                 output),
             store.Settings.FrameRate);
 
+        // Recording failures must be visible even while the message loop keeps running.
+        encodingLoop.Failed += failure => Console.Error.WriteLine($"Recording failed; retrying: {failure}");
+
         using var stopEncoding = new CancellationTokenSource();
         var encoding = Task.Run(() => encodingLoop.RunAsync(stopEncoding.Token));
 

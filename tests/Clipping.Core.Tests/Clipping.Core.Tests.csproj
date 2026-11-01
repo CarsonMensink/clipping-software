@@ -16,6 +16,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- These production helpers contain no Windows APIs and can run in host regression tests. -->
+    <Compile Include="../../src/Clipping.Windows/Encoding/EncoderProgress.cs" Link="Windows/EncoderProgress.cs" />
+    <Compile Include="../../src/Clipping.Windows/Encoding/H264ParameterSets.cs" Link="Windows/H264ParameterSets.cs" />
+    <Compile Include="../../src/Clipping.Windows/Encoding/ClipFileWrite.cs" Link="Windows/ClipFileWrite.cs" />
+    <Compile Include="../../src/Clipping.Windows/Capture/CaptureResize.cs" Link="Windows/CaptureResize.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
