@@ -15,38 +15,50 @@ public sealed class FrameRateGateTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new FrameRateGate(frameRate));
     }
 
+    // Capture must begin immediately when the first frame arrives.
     [Fact]
     public void TryPass_FirstFrame_Passes()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
 
+        // Act & Assert
         Assert.True(gate.TryPass(_start));
     }
 
+    // Excess monitor frames must not exceed the configured capture rate.
     [Fact]
     public void TryPass_FrameSoonAfterLast_IsSkipped()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
         gate.TryPass(_start);
 
+        // Act & Assert
         Assert.False(gate.TryPass(_start + TimeSpan.FromMilliseconds(4)));
     }
 
+    // A frame due at the next capture interval must not be dropped.
     [Fact]
     public void TryPass_FrameOneIntervalLater_Passes()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
         gate.TryPass(_start);
 
+        // Act & Assert
         Assert.True(gate.TryPass(_start + TimeSpan.FromSeconds(1.0 / 30)));
     }
 
+    // Stale frames must not move capture backward in time.
     [Fact]
     public void TryPass_FrameOlderThanLastPassed_IsSkipped()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
         gate.TryPass(_start);
 
+        // Act & Assert
         Assert.False(gate.TryPass(_start - TimeSpan.FromSeconds(1)));
     }
 

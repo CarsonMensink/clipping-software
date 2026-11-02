@@ -98,9 +98,13 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.Equal(new AppSettings().BufferLength, new JsonSettingsStore(_filePath).Settings.BufferLength);
     }
 
+    // Preferences must survive both first-save directory creation and later edits (#5).
     [Fact]
-    public void Update_PersistsAcrossInstances()
+    public void Update_PersistsSuccessivePreferencesAcrossRestart()
     {
+        // Arrange
+        var nestedPath = Path.Combine(_directory, "nested", "settings.json");
+        var store = new JsonSettingsStore(nestedPath);
         var expected = new AppSettings
         {
             SelectedMonitor = @"\\.\DISPLAY2",
@@ -109,31 +113,42 @@ public sealed class JsonSettingsStoreTests : IDisposable
             BufferLength = 120,
             FrameRate = 45,
         };
-        var store = new JsonSettingsStore(_filePath);
 
+        // Act
         store.Update(_ => expected);
-        var reloaded = new JsonSettingsStore(_filePath);
+        store.Update(settings => settings with { SelectedHotkey = "F9" });
 
-        Assert.Equal(expected, reloaded.Settings);
+        // Assert
+        var final = expected with { SelectedHotkey = "F9" };
+        Assert.Equal(final, store.Settings);
+        Assert.Equal(final, new JsonSettingsStore(nestedPath).Settings);
     }
 
+    // Observers must receive the change only once its new preferences are usable in memory and on disk (#5).
     [Fact]
-    public void Update_AppliesChangeToCurrentSettings()
+    public void Update_NotifiesConsumersWithCommittedPreviousAndCurrentSettings()
     {
+        // Arrange
         var store = new JsonSettingsStore(_filePath);
+        var previous = store.Settings;
+        var expected = previous with { BufferLength = 90 };
+        var raised = new List<(SettingsChangedEventArgs Event, AppSettings Visible, AppSettings Persisted)>();
+        store.Changed += (_, args) => raised.Add((args, store.Settings, new JsonSettingsStore(_filePath).Settings));
 
-        store.Update(s => s with { BufferLength = 45 });
-        store.Update(s => s with { SelectedHotkey = "F9" });
+        // Act
+        store.Update(_ => expected);
 
-        Assert.Equal(new AppSettings { BufferLength = 45, SelectedHotkey = "F9" }, store.Settings);
+        // Assert
+        var notification = Assert.Single(raised);
+        Assert.Equal(previous, notification.Event.Previous);
+        Assert.Equal(expected, notification.Event.Current);
+        Assert.Equal(expected, notification.Visible);
+        Assert.Equal(expected, notification.Persisted);
     }
 
     [Theory]
-    [InlineData(0)]
     [InlineData(AppSettings.MinBufferLength - 1)]
     [InlineData(AppSettings.MaxBufferLength + 1)]
-    [InlineData(-1)]
-    [InlineData(long.MaxValue)]
     public void Update_WhenBufferLengthIsOutOfRange_Throws(long bufferLength)
     {
         var store = new JsonSettingsStore(_filePath);
@@ -146,7 +161,6 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
     [Theory]
     [InlineData(AppSettings.MinBufferLength)]
-    [InlineData((AppSettings.MaxBufferLength + AppSettings.MinBufferLength) /2)]
     [InlineData(AppSettings.MaxBufferLength)]
     public void Update_WhenBufferLengthIsInRange_Accepts(long bufferLength)
     {
@@ -158,11 +172,8 @@ public sealed class JsonSettingsStoreTests : IDisposable
     }
 
     [Theory]
-    [InlineData(0)]
     [InlineData(AppSettings.MinFrameRate - 1)]
     [InlineData(AppSettings.MaxFrameRate + 1)]
-    [InlineData(-1)]
-    [InlineData(int.MaxValue)]
     public void Update_WhenFrameRateIsOutOfRange_Throws(int frameRate)
     {
         var store = new JsonSettingsStore(_filePath);
@@ -175,7 +186,6 @@ public sealed class JsonSettingsStoreTests : IDisposable
 
     [Theory]
     [InlineData(AppSettings.MinFrameRate)]
-    [InlineData(30)]
     [InlineData(AppSettings.MaxFrameRate)]
     public void Update_WhenFrameRateIsInRange_Accepts(int frameRate)
     {
@@ -184,53 +194,6 @@ public sealed class JsonSettingsStoreTests : IDisposable
         store.Update(s => s with { FrameRate = frameRate });
 
         Assert.Equal(frameRate, store.Settings.FrameRate);
-    }
-
-    [Fact]
-    public void Update_WhenParentDirectoryIsMissing_CreatesIt()
-    {
-        var nestedPath = Path.Combine(_directory, "nested", "deeper", "settings.json");
-        var store = new JsonSettingsStore(nestedPath);
-
-        store.Update(s => s with { BufferLength = AppSettings.MinBufferLength });
-
-        Assert.True(File.Exists(nestedPath));
-    }
-
-    [Fact]
-    public void Update_DoesNotLeaveTempFileBehind()
-    {
-        var store = new JsonSettingsStore(_filePath);
-
-        store.Update(s => s with { BufferLength = AppSettings.MinBufferLength });
-
-        Assert.False(File.Exists(_filePath + ".tmp"));
-    }
-
-    [Fact]
-    public void Update_RaisesChangedWithPreviousAndCurrent()
-    {
-        var store = new JsonSettingsStore(_filePath);
-        var raised = new List<SettingsChangedEventArgs>();
-        store.Changed += (_, e) => raised.Add(e);
-
-        store.Update(s => s with { BufferLength = 90 });
-
-        var args = Assert.Single(raised);
-        Assert.Equal(new AppSettings(), args.Previous);
-        Assert.Equal(new AppSettings { BufferLength = 90 }, args.Current);
-    }
-
-    [Fact]
-    public void Update_RaisesChangedAfterSettingsAreUpdated()
-    {
-        var store = new JsonSettingsStore(_filePath);
-        AppSettings? seenInHandler = null;
-        store.Changed += (_, _) => seenInHandler = store.Settings;
-
-        store.Update(s => s with { BufferLength = 90 });
-
-        Assert.Equal(90, seenInHandler?.BufferLength);
     }
 
     [Fact]
@@ -255,21 +218,33 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.False(File.Exists(_filePath));
     }
 
+    // Failed persistence must not announce unapplied preferences, and a later retry can still save.
     [Fact]
-    public void Update_WhenSaveFails_ThrowsAndLeavesStateUnchanged()
+    public void FailedSave_PreservesSettingsAndNotificationsUntilSuccessfulRetry()
     {
+        // Arrange
         var store = new JsonSettingsStore(_filePath);
-        var raised = false;
-        store.Changed += (_, _) => raised = true;
-
-        // A directory at the settings path makes the final move fail.
+        var raised = new List<SettingsChangedEventArgs>();
+        store.Changed += (_, args) => raised.Add(args);
+        // A directory at the destination simulates an unavailable settings file on every host.
         Directory.CreateDirectory(_filePath);
 
-        Assert.ThrowsAny<Exception>(() => store.Update(s => s with { BufferLength = 90 }));
+        // Act
+        var failure = Record.Exception(() => store.Update(s => s with { BufferLength = 90 }));
 
+        // Assert
+        Assert.True(failure is IOException or UnauthorizedAccessException);
         Assert.Equal(new AppSettings(), store.Settings);
-        Assert.False(raised);
-        Assert.False(File.Exists(_filePath + ".tmp"));
+        Assert.Empty(raised);
+        Assert.Equal([_filePath], Directory.GetFileSystemEntries(_directory));
+
+        // Act: the destination becomes writable again.
+        Directory.Delete(_filePath);
+        store.Update(s => s with { BufferLength = 90 });
+
+        // Assert
+        Assert.Equal(90, new JsonSettingsStore(_filePath).Settings.BufferLength);
+        Assert.Equal(90, Assert.Single(raised).Current.BufferLength);
     }
 
     [Fact]

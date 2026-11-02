@@ -18,25 +18,33 @@ public sealed class FramePacerTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new FramePacer(frameRate));
     }
 
+    // The video timeline must preserve the first capture timestamp.
     [Fact]
     public void Place_FirstFrame_StartsTimelineAtItsTimestamp()
     {
+        // Arrange
         var pacer = new FramePacer(60);
 
+        // Act
         var placement = pacer.Place(_start);
 
+        // Assert
         Assert.Empty(placement.Repeats);
         Assert.Equal(_start, placement.Time);
     }
 
+    // Consecutive captured frames need no fabricated duplicates.
     [Fact]
     public void Place_FrameInNextSlot_HasNoRepeats()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
 
+        // Act
         var placement = pacer.Place(_start + _interval60);
 
+        // Assert
         Assert.Empty(placement.Repeats);
         Assert.Equal(At(1), placement.Time);
     }
@@ -65,29 +73,37 @@ public sealed class FramePacerTests
         Assert.Equal(At(2), placement.Time);
     }
 
+    // A slightly late frame can use the next available video slot.
     [Fact]
     public void Place_FrameWhoseSlotIsTaken_MovesToNextSlot()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
 
+        // Act
         // Nearest slot is 0, already taken; slot 1 is only 0.6 intervals ahead.
         var placement = pacer.Place(_start + _interval60 * 0.4);
 
+        // Assert
         Assert.Empty(placement.Repeats);
         Assert.Equal(At(1), placement.Time);
     }
 
+    // Crowded arrivals must not push video a full frame ahead of capture.
     [Fact]
     public void Place_FrameThatWouldRunAheadOfRealTime_IsDropped()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
         pacer.Place(_start + _interval60 * 0.4);
 
+        // Act
         // Slot 1 is taken, and slot 2 would be 1.5 intervals ahead.
         var placement = pacer.Place(_start + _interval60 * 0.5);
 
+        // Assert
         Assert.Empty(placement.Repeats);
         Assert.Null(placement.Time);
     }
@@ -109,49 +125,64 @@ public sealed class FramePacerTests
         Assert.Empty(pacer.FillUntil(_start));
     }
 
+    // Idle gameplay must still fill the video timeline through the requested time.
     [Fact]
     public void FillUntil_RepeatsLastFrameForEverySlotUpToTime()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
 
+        // Act
         var repeats = pacer.FillUntil(_start + _interval60 * 3.5);
 
+        // Assert
         Assert.Equal([At(1), At(2), At(3)], repeats);
     }
 
+    // Repeated idle filling must not encode the same video slot twice.
     [Fact]
     public void FillUntil_CalledAgain_OnlyFillsNewSlots()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
         pacer.FillUntil(At(2));
 
+        // Act
         var repeats = pacer.FillUntil(At(4));
 
+        // Assert
         Assert.Equal([At(3), At(4)], repeats);
     }
 
+    // Live capture must resume in the next slot after idle repeats.
     [Fact]
     public void FillUntil_ThenFrame_TakesSlotAfterFilledOnes()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
         pacer.FillUntil(At(2));
 
+        // Act
         var placement = pacer.Place(_start + _interval60 * 3);
 
+        // Assert
         Assert.Empty(placement.Repeats);
         Assert.Equal(At(3), placement.Time);
     }
 
+    // A stale fill request must not duplicate already encoded video.
     [Fact]
     public void FillUntil_TimeInPast_ReturnsNothing()
     {
+        // Arrange
         var pacer = new FramePacer(60);
         pacer.Place(_start);
         pacer.Place(_start + _interval60 * 5);
 
+        // Act & Assert
         Assert.Empty(pacer.FillUntil(At(2)));
     }
 

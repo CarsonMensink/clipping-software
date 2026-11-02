@@ -32,10 +32,16 @@ public sealed class ClipCompatibilityTests
     [Fact]
     public void Headers_FromMediaType_AreAttachedToLaterSamples()
     {
+        // Arrange
         var headers = new H264ParameterSets();
+
+        // Act
         var seeded = headers.Update([0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22]);
-        Assert.NotNull(seeded);
-        Assert.Same(seeded, headers.Update([0, 0, 1, 0x65, 0x33]));
+        var later = headers.Update([0, 0, 1, 0x65, 0x33]);
+
+        // Assert
+        Assert.Equal(new byte[] { 0, 0, 0, 1, 0x67, 0x11, 0, 0, 0, 1, 0x68, 0x22 }, seeded);
+        Assert.Equal(seeded, later);
     }
 
     // An SPS alone cannot describe a playable stream, and a new encoder cannot borrow old headers.

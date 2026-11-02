@@ -37,27 +37,25 @@ public sealed class ClipSaverTests : IDisposable
         Assert.Empty(_writer.Written);
     }
 
+    // A saved highlight is available in the configured folder even on the first save (#8).
     [Fact]
-    public async Task SaveAsync_WritesBufferToDatedFileInOutputDirectory()
+    public async Task SaveAsync_WritesSnapshotToDatedFileInNewOutputDirectory()
     {
+        // Arrange
         FillBuffer();
+        var saver = CreateSaver();
 
-        var result = await CreateSaver().SaveAsync();
+        // Act
+        var result = await saver.SaveAsync();
 
+        // Assert
         Assert.True(result.Succeeded);
         Assert.Equal(Path.Combine(_directory, "clips", "Clip 2026-10-31 22-16-05.mp4"), result.Path);
+        Assert.True(File.Exists(result.Path));
         Assert.Equal(TimeSpan.FromSeconds(2), result.Duration);
-        Assert.Equal(20, Assert.Single(_writer.Written).Clip.Samples.Count);
-    }
-
-    [Fact]
-    public async Task SaveAsync_CreatesMissingOutputDirectory()
-    {
-        FillBuffer();
-
-        await CreateSaver().SaveAsync();
-
-        Assert.True(Directory.Exists(Path.Combine(_directory, "clips")));
+        var written = Assert.Single(_writer.Written);
+        Assert.Equal(result.Path, written.Path);
+        Assert.Equal(20, written.Clip.Samples.Count);
     }
 
     [Fact]
