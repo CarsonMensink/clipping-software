@@ -57,6 +57,23 @@ public sealed class DisplayTargetTests
         Assert.Equal([_right], raised);
     }
 
+    // Choosing the default display explicitly must not interrupt capture on that same display.
+    [Fact]
+    public void SelectMonitor_WhenDefaultPrimaryAlreadyActive_DoesNotNotify()
+    {
+        // Arrange
+        using var target = new DisplayTarget(_source);
+        var raised = new List<MonitorInfo>();
+        target.SelectionChanged += (_, monitor) => raised.Add(monitor);
+
+        // Act
+        target.SelectMonitor(_main.DeviceName);
+
+        // Assert
+        Assert.Equal(_main, target.GetSelectedMonitor());
+        Assert.Empty(raised);
+    }
+
     [Fact]
     public void SelectMonitor_WhenNotAttached_ThrowsAndLeavesSelectionUnchanged()
     {

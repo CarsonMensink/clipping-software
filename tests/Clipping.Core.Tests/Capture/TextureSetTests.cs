@@ -77,27 +77,42 @@ public sealed class TextureSetTests
     public void RetiredSet_ReleasesIdleTexturesAndDefersBorrowedTextureUntilReturn()
     {
         // Arrange
-        var textures = CreateTextures(2);
+        var textures = CreateTextures(3);
         var set = new TextureSet<FakeTexture>(textures);
         Assert.True(set.TryRent(out var lease));
         var borrowed = lease.Texture;
-        var idle = Assert.Single(textures, t => t != borrowed);
+        var idle = textures.Where(t => t != borrowed).ToArray();
 
         // Act
         set.Dispose();
-        set.Dispose();
 
         // Assert
-        Assert.Equal(1, idle.DisposeCount);
+        Assert.Equal(2, idle.Length);
+        Assert.All(idle, texture => Assert.Equal(1, texture.DisposeCount));
         Assert.False(borrowed.IsDisposed);
 
         // Act: the encoder finishes after capture has stopped.
         lease.Dispose();
-        lease.Dispose();
 
         // Assert
         Assert.Equal(1, borrowed.DisposeCount);
-        Assert.Equal(1, idle.DisposeCount);
+        Assert.All(idle, texture => Assert.Equal(1, texture.DisposeCount));
+    }
+
+    // Repeated shutdown must not release any texture twice.
+    [Fact]
+    public void RepeatedSetDisposal_ReleasesEachIdleTextureOnlyOnce()
+    {
+        // Arrange
+        var textures = CreateTextures(2);
+        var set = new TextureSet<FakeTexture>(textures);
+        set.Dispose();
+
+        // Act
+        set.Dispose();
+
+        // Assert
+        Assert.All(textures, texture => Assert.Equal(1, texture.DisposeCount));
     }
 
     // Retired capture resources must not be lent to new frames.

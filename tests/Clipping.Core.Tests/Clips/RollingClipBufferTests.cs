@@ -191,15 +191,22 @@ public sealed class RollingClipBufferTests
 
         // Assert: inspect the saved snapshots after further writes as well as their original acquisition.
         Assert.Equal(rounds, snapshots.Count);
-        Assert.All(snapshots, snapshot =>
+        for (var i = 0; i < snapshots.Count; i++)
         {
+            var snapshot = snapshots[i];
             Assert.NotEmpty(snapshot.Samples);
             Assert.True(snapshot.Samples[0].IsKeyframe);
             Assert.InRange(snapshot.Duration, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
             var times = snapshot.Samples.Select(sample => sample.Timestamp).ToArray();
             Assert.Equal(times.Order(), times);
             Assert.Equal(times.Length, times.Distinct().Count());
-        });
+            // The barrier guarantees the preceding writer round has finished before this snapshot starts.
+            var previousRoundLastFrame = 9 + i * 100;
+            Assert.True(times[^1] >= At(previousRoundLastFrame));
+        }
+
+        // All accepted gameplay must remain visible at the end, rather than returning a cached snapshot.
+        Assert.Equal(At(9 + rounds * 100), buffer.Snapshot().Samples[^1].Timestamp);
     }
 
     private static void AddSeconds(RollingClipBuffer buffer, int seconds, int startSecond = 0)
