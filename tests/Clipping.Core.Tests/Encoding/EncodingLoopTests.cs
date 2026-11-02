@@ -14,16 +14,22 @@ public sealed class EncodingLoopTests
     private readonly List<FakeOwner> _owners = [];
     private bool _failNextCreate;
 
+    // Captured video must reach the buffer with its original size and timestamp (#4).
     [Fact]
-    public void Process_FirstFrame_CreatesEncoderOfItsSizeAndEncodesIt()
+    public void FirstFrame_ProducesEncodedSampleWithCaptureDimensionsAndTimestamp()
     {
+        // Arrange
         using var loop = CreateLoop();
 
+        // Act
         loop.Process(Frame(1, At(0)));
 
-        var encoder = Assert.Single(_encoders);
-        Assert.Equal((2560, 1440, 60), (encoder.Width, encoder.Height, encoder.FrameRate));
-        Assert.Equal([(1, At(0))], encoder.Encoded);
+        // Assert
+        Assert.True(loop.Samples.TryRead(out var sample));
+        Assert.Equal(At(0), sample.Timestamp);
+        Assert.Equal((2560, 1440), (sample.Width, sample.Height));
+        Assert.True(sample.IsKeyframe);
+        Assert.Equal(60, Assert.Single(_encoders).FrameRate);
     }
 
     [Fact]
@@ -125,27 +131,35 @@ public sealed class EncodingLoopTests
         Assert.Empty(_encoders);
     }
 
+    // Idle holdback and accepting a later live frame are independently meaningful behaviors.
     [Fact]
     public void Fill_RepeatsLatestFrameUpToHoldbackBeforeNow()
     {
+        // Arrange
         using var loop = CreateLoop();
         loop.Process(Frame(1, At(0)));
 
+        // Act
         // Six slots behind now is the 100 ms holdback; slots 1–3 are before it.
         loop.Fill(At(9.5));
 
+        // Assert
         Assert.Equal([(1, At(0)), (1, At(1)), (1, At(2)), (1, At(3))], _encoders[0].Encoded);
     }
 
+    // Idle holdback and accepting a later live frame are independently meaningful behaviors.
     [Fact]
     public void Fill_ThenLateFrame_TakesNextFreeSlot()
     {
+        // Arrange
         using var loop = CreateLoop();
         loop.Process(Frame(1, At(0)));
         loop.Fill(At(9.5));
 
+        // Act
         loop.Process(Frame(2, At(4)));
 
+        // Assert
         Assert.Equal((2, At(4)), _encoders[0].Encoded[^1]);
     }
 
@@ -166,16 +180,6 @@ public sealed class EncodingLoopTests
         }
 
         Assert.True(loop.Samples.Completion.IsCompleted);
-    }
-
-    [Fact]
-    public void Encoders_WriteToTheLoopsSamples()
-    {
-        using var loop = CreateLoop();
-        loop.Process(Frame(1, At(0)));
-
-        Assert.True(loop.Samples.TryRead(out var sample));
-        Assert.Equal(At(0), sample.Timestamp);
     }
 
     [Fact]

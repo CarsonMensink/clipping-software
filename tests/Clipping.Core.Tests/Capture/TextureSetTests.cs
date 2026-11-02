@@ -10,124 +10,109 @@ public sealed class TextureSetTests
         Assert.Throws<ArgumentException>(() => new TextureSet<FakeTexture>([]));
     }
 
+    // Capture drops frames when every texture is in use instead of sharing a live texture.
     [Fact]
-    public void TryRent_LendsEachTextureOnce()
+    public void Rent_ExhaustsCapacityWithoutSharingTextures()
     {
+        // Arrange
         var textures = CreateTextures(3);
         using var set = new TextureSet<FakeTexture>(textures);
+        var leases = new List<TextureLease<FakeTexture>>();
 
-        var rented = new List<FakeTexture>();
-        for (var i = 0; i < textures.Length; i++)
+        // Act
+        for (var i = 0; i < 3; i++)
         {
             Assert.True(set.TryRent(out var lease));
-            rented.Add(lease.Texture);
+            leases.Add(lease);
         }
+        var available = set.TryRent(out var excess);
 
-        Assert.Equivalent(textures, rented, strict: true);
+        // Assert
+        Assert.Equivalent(textures, leases.Select(l => l.Texture), strict: true);
+        Assert.False(available);
+        Assert.Null(excess);
+        foreach (var lease in leases) lease.Dispose();
     }
 
+    // Returning a frame should make its live texture available for reuse.
     [Fact]
-    public void TryRent_WhenAllLentOut_ReturnsFalse()
+    public void ReturnedLease_RemainsUsableForTheNextFrame()
     {
+        // Arrange
         using var set = new TextureSet<FakeTexture>(CreateTextures(1));
-        set.TryRent(out _);
+        Assert.True(set.TryRent(out var first));
+        var texture = first.Texture;
 
-        Assert.False(set.TryRent(out var lease));
-        Assert.Null(lease);
+        // Act
+        first.Dispose();
+        var available = set.TryRent(out var second);
+
+        // Assert
+        Assert.True(available);
+        Assert.Same(texture, second!.Texture);
+        Assert.False(texture.IsDisposed);
+        second.Dispose();
     }
 
+    // Duplicate frame releases must not allow the same texture to be lent twice.
     [Fact]
-    public void LeaseDispose_ReturnsTextureForReuse()
+    public void DuplicateLeaseReturn_DoesNotCreateAnotherAvailableTexture()
     {
+        // Arrange
         using var set = new TextureSet<FakeTexture>(CreateTextures(1));
-        set.TryRent(out var first);
-        var texture = first!.Texture;
+        Assert.True(set.TryRent(out var first));
 
+        // Act
+        first.Dispose();
         first.Dispose();
 
+        // Assert
         Assert.True(set.TryRent(out var second));
-        Assert.Same(texture, second.Texture);
-    }
-
-    [Fact]
-    public void LeaseDispose_Twice_ReturnsTextureOnce()
-    {
-        using var set = new TextureSet<FakeTexture>(CreateTextures(2));
-        set.TryRent(out var first);
-        set.TryRent(out _);
-
-        first!.Dispose();
-        first.Dispose();
-
-        // Only one texture came back, so a second rent finds none.
-        Assert.True(set.TryRent(out _));
         Assert.False(set.TryRent(out _));
+        second.Dispose();
     }
 
+    // Stopping capture frees idle textures while allowing the encoder to finish its borrowed frame.
     [Fact]
-    public void LeaseDispose_DoesNotDisposeTexture()
+    public void RetiredSet_ReleasesIdleTexturesAndDefersBorrowedTextureUntilReturn()
     {
-        using var set = new TextureSet<FakeTexture>(CreateTextures(1));
-        set.TryRent(out var lease);
-
-        lease!.Dispose();
-
-        Assert.False(lease.Texture.IsDisposed);
-    }
-
-    [Fact]
-    public void Dispose_DisposesFreeTextures()
-    {
+        // Arrange
         var textures = CreateTextures(2);
         var set = new TextureSet<FakeTexture>(textures);
+        Assert.True(set.TryRent(out var lease));
+        var borrowed = lease.Texture;
+        var idle = Assert.Single(textures, t => t != borrowed);
 
+        // Act
+        set.Dispose();
         set.Dispose();
 
-        Assert.All(textures, texture => Assert.True(texture.IsDisposed));
+        // Assert
+        Assert.Equal(1, idle.DisposeCount);
+        Assert.False(borrowed.IsDisposed);
+
+        // Act: the encoder finishes after capture has stopped.
+        lease.Dispose();
+        lease.Dispose();
+
+        // Assert
+        Assert.Equal(1, borrowed.DisposeCount);
+        Assert.Equal(1, idle.DisposeCount);
     }
 
+    // Retired capture resources must not be lent to new frames.
     [Fact]
-    public void Dispose_KeepsLentTexturesValid()
+    public void RetiredSet_RejectsNewRentals()
     {
-        var set = new TextureSet<FakeTexture>(CreateTextures(2));
-        set.TryRent(out var lease);
-
-        set.Dispose();
-
-        Assert.False(lease!.Texture.IsDisposed);
-    }
-
-    [Fact]
-    public void LeaseDispose_AfterSetDisposed_DisposesTexture()
-    {
-        var set = new TextureSet<FakeTexture>(CreateTextures(1));
-        set.TryRent(out var lease);
-        set.Dispose();
-
-        lease!.Dispose();
-
-        Assert.True(lease.Texture.IsDisposed);
-    }
-
-    [Fact]
-    public void Dispose_Twice_DisposesTexturesOnce()
-    {
-        var textures = CreateTextures(1);
-        var set = new TextureSet<FakeTexture>(textures);
-
-        set.Dispose();
-        set.Dispose();
-
-        Assert.Equal(1, textures[0].DisposeCount);
-    }
-
-    [Fact]
-    public void TryRent_AfterDispose_Throws()
-    {
+        // Arrange
         var set = new TextureSet<FakeTexture>(CreateTextures(1));
         set.Dispose();
 
-        Assert.Throws<ObjectDisposedException>(() => set.TryRent(out _));
+        // Act
+        var error = Record.Exception(() => set.TryRent(out _));
+
+        // Assert
+        Assert.IsType<ObjectDisposedException>(error);
     }
 
     [Fact]

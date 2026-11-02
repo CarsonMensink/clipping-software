@@ -15,38 +15,50 @@ public sealed class FrameRateGateTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new FrameRateGate(frameRate));
     }
 
+    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
     [Fact]
     public void TryPass_FirstFrame_Passes()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
 
+        // Act & Assert
         Assert.True(gate.TryPass(_start));
     }
 
+    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
     [Fact]
     public void TryPass_FrameSoonAfterLast_IsSkipped()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
         gate.TryPass(_start);
 
+        // Act & Assert
         Assert.False(gate.TryPass(_start + TimeSpan.FromMilliseconds(4)));
     }
 
+    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
     [Fact]
     public void TryPass_FrameOneIntervalLater_Passes()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
         gate.TryPass(_start);
 
+        // Act & Assert
         Assert.True(gate.TryPass(_start + TimeSpan.FromSeconds(1.0 / 30)));
     }
 
+    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
     [Fact]
     public void TryPass_FrameOlderThanLastPassed_IsSkipped()
     {
+        // Arrange
         var gate = new FrameRateGate(30);
         gate.TryPass(_start);
 
+        // Act & Assert
         Assert.False(gate.TryPass(_start - TimeSpan.FromSeconds(1)));
     }
 

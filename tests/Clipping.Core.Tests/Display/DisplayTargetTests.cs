@@ -11,19 +11,25 @@ public sealed class DisplayTargetTests
 
     private readonly FakeMonitorSource _source = new(_left, _main, _right);
 
+    // Listing attached monitors and choosing the initial display are separate consumer contracts.
     [Fact]
     public void GetAvailableMonitors_ReturnsMonitorsFromSource()
     {
+        // Arrange
         var target = new DisplayTarget(_source);
 
+        // Act & Assert
         Assert.Equal([_left, _main, _right], target.GetAvailableMonitors());
     }
 
+    // Listing attached monitors and choosing the initial display are separate consumer contracts.
     [Fact]
     public void GetSelectedMonitor_WhenNothingSelected_ReturnsPrimary()
     {
+        // Arrange
         var target = new DisplayTarget(_source);
 
+        // Act & Assert
         Assert.Equal(_main, target.GetSelectedMonitor());
     }
 
@@ -33,48 +39,22 @@ public sealed class DisplayTargetTests
         Assert.Throws<InvalidOperationException>(() => new DisplayTarget(new FakeMonitorSource()));
     }
 
+    // Capture switches once to the requested device even if its persisted name uses different casing.
     [Fact]
-    public void SelectMonitor_SelectsByDeviceName()
+    public void SelectMonitor_ChangesSelectionAndNotifiesOnlyOnce()
     {
-        var target = new DisplayTarget(_source);
+        // Arrange
+        using var target = new DisplayTarget(_source);
+        var raised = new List<MonitorInfo>();
+        target.SelectionChanged += (_, monitor) => raised.Add(monitor);
 
+        // Act
+        target.SelectMonitor(@"\\.\display3");
         target.SelectMonitor(_right.DeviceName);
 
+        // Assert
         Assert.Equal(_right, target.GetSelectedMonitor());
-    }
-
-    [Fact]
-    public void SelectMonitor_IgnoresCase()
-    {
-        var target = new DisplayTarget(_source);
-
-        target.SelectMonitor(@"\\.\display3");
-
-        Assert.Equal(_right, target.GetSelectedMonitor());
-    }
-
-    [Fact]
-    public void SelectMonitor_RaisesSelectionChangedWithNewMonitor()
-    {
-        var target = new DisplayTarget(_source);
-        var raised = new List<MonitorInfo>();
-        target.SelectionChanged += (_, m) => raised.Add(m);
-
-        target.SelectMonitor(_left.DeviceName);
-
-        Assert.Equal([_left], raised);
-    }
-
-    [Fact]
-    public void SelectMonitor_WhenAlreadySelected_DoesNotRaise()
-    {
-        var target = new DisplayTarget(_source);
-        var raised = false;
-        target.SelectionChanged += (_, _) => raised = true;
-
-        target.SelectMonitor(_main.DeviceName);
-
-        Assert.False(raised);
+        Assert.Equal([_right], raised);
     }
 
     [Fact]
@@ -100,26 +80,20 @@ public sealed class DisplayTargetTests
         Assert.Throws<ArgumentNullException>(() => target.SelectMonitor(null!));
     }
 
+    // A newly plugged-in monitor becomes available to capture without restarting the app.
     [Fact]
-    public void MonitorsChanged_WhenMonitorAdded_IsReflectedInEnumeration()
+    public void AttachedMonitor_IsListedAndCanBeSelected()
     {
-        var target = new DisplayTarget(_source);
+        // Arrange
+        using var target = new DisplayTarget(_source);
         var added = new MonitorInfo(@"\\.\DISPLAY4", "Added", new Rectangle(4480, 0, 1920, 1080), IsPrimary: false);
 
+        // Act
         _source.SetMonitors(_left, _main, _right, added);
-
-        Assert.Contains(added, target.GetAvailableMonitors());
-    }
-
-    [Fact]
-    public void MonitorsChanged_WhenAddedMonitorSelected_SelectsIt()
-    {
-        var target = new DisplayTarget(_source);
-        var added = new MonitorInfo(@"\\.\DISPLAY4", "Added", new Rectangle(4480, 0, 1920, 1080), IsPrimary: false);
-        _source.SetMonitors(_left, _main, _right, added);
-
         target.SelectMonitor(added.DeviceName);
 
+        // Assert
+        Assert.Equal([_left, _main, _right, added], target.GetAvailableMonitors());
         Assert.Equal(added, target.GetSelectedMonitor());
     }
 
@@ -138,29 +112,37 @@ public sealed class DisplayTargetTests
         Assert.False(raised);
     }
 
+    // Unplug fallback and reconnection policy can regress independently.
     [Fact]
     public void MonitorsChanged_WhenSelectedMonitorRemoved_FallsBackToPrimaryAndRaises()
     {
+        // Arrange
         var target = new DisplayTarget(_source);
         target.SelectMonitor(_right.DeviceName);
         var raised = new List<MonitorInfo>();
         target.SelectionChanged += (_, m) => raised.Add(m);
 
+        // Act
         _source.SetMonitors(_left, _main);
 
+        // Assert
         Assert.Equal(_main, target.GetSelectedMonitor());
         Assert.Equal([_main], raised);
     }
 
+    // Unplug fallback and reconnection policy can regress independently.
     [Fact]
     public void MonitorsChanged_WhenSelectedMonitorRemovedThenReattached_KeepsFollowingPrimary()
     {
+        // Arrange
         var target = new DisplayTarget(_source);
         target.SelectMonitor(_right.DeviceName);
 
+        // Act
         _source.SetMonitors(_left, _main);
         _source.SetMonitors(_left, _main, _right);
 
+        // Assert
         Assert.Equal(_main, target.GetSelectedMonitor());
     }
 
@@ -231,14 +213,21 @@ public sealed class DisplayTargetTests
         Assert.Equal(_right, target.GetSelectedMonitor());
     }
 
+    // A closed display target must not send capture changes after shutdown.
     [Fact]
-    public void Dispose_StopsListeningForChanges()
+    public void DisposedTarget_DoesNotPublishFurtherDisplayChanges()
     {
+        // Arrange
         var target = new DisplayTarget(_source);
+        var raised = new List<MonitorInfo>();
+        target.SelectionChanged += (_, monitor) => raised.Add(monitor);
 
+        // Act
         target.Dispose();
+        _source.SetMonitors(_left);
 
-        Assert.False(_source.HasSubscribers);
+        // Assert
+        Assert.Empty(raised);
     }
 
     private sealed class FakeMonitorSource(params MonitorInfo[] monitors) : IMonitorSource

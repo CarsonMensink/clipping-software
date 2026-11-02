@@ -37,15 +37,21 @@ public sealed class RollingClipBufferTests
         Assert.Equal([2], Frames(buffer.Snapshot()));
     }
 
+    // Short gameplay is retained intact and reports the duration that a saved highlight will contain.
     [Fact]
-    public void Add_WithinRetention_KeepsEverything()
+    public void Snapshot_WithinRetention_PreservesAllFramesAndReportsDuration()
     {
+        // Arrange
         var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
 
+        // Act
         AddSeconds(buffer, 2);
+        var snapshot = buffer.Snapshot();
 
-        Assert.Equal(20, buffer.Snapshot().Samples.Count);
-        Assert.Equal(TimeSpan.FromSeconds(2), buffer.RetainedDuration);
+        // Assert
+        Assert.Equal(Enumerable.Range(0, 20), Frames(snapshot));
+        Assert.Equal(TimeSpan.FromSeconds(2), snapshot.Duration);
+        Assert.Equal(snapshot.Duration, buffer.RetainedDuration);
     }
 
     [Fact]
@@ -86,28 +92,46 @@ public sealed class RollingClipBufferTests
         Assert.InRange(buffer.Snapshot().Samples.Count, 30, 40);
     }
 
+    // A resolution change must start a fresh decodable clip rather than mixing incompatible frames.
     [Fact]
-    public void Add_SizeChange_StartsOver()
+    public void ResolutionChange_DropsOldVideoAndWaitsForNewKeyframe()
     {
+        // Arrange
         var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
         AddSeconds(buffer, 2);
 
-        buffer.Add(Sample(20, keyframe: true, width: 1920, height: 1080));
-
-        var snapshot = buffer.Snapshot();
-        Assert.Equal([20], Frames(snapshot));
-        Assert.Equal(1920, snapshot.Samples[0].Width);
-    }
-
-    [Fact]
-    public void Add_SizeChangeWithoutKeyframe_IsDroppedUntilOne()
-    {
-        var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
-        AddSeconds(buffer, 2);
-
+        // Act
         buffer.Add(Sample(20, keyframe: false, width: 1920, height: 1080));
 
+        // Assert
         Assert.Empty(buffer.Snapshot().Samples);
+
+        // Act: the new stream becomes playable at its first keyframe.
+        buffer.Add(Sample(21, keyframe: true, width: 1920, height: 1080));
+
+        // Assert
+        var sample = Assert.Single(buffer.Snapshot().Samples);
+        Assert.Equal(At(21), sample.Timestamp);
+        Assert.True(sample.IsKeyframe);
+        Assert.Equal((1920, 1080), (sample.Width, sample.Height));
+    }
+
+    // A keyframe arriving with the resize should be usable immediately.
+    [Fact]
+    public void ResolutionChange_StartingWithKeyframe_IsImmediatelyDecodable()
+    {
+        // Arrange
+        var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
+        AddSeconds(buffer, 2);
+
+        // Act
+        buffer.Add(Sample(20, keyframe: true, width: 1920, height: 1080));
+
+        // Assert
+        var sample = Assert.Single(buffer.Snapshot().Samples);
+        Assert.Equal(At(20), sample.Timestamp);
+        Assert.True(sample.IsKeyframe);
+        Assert.Equal((1920, 1080), (sample.Width, sample.Height));
     }
 
     [Fact]
@@ -135,39 +159,49 @@ public sealed class RollingClipBufferTests
         Assert.Equal(At(0), snapshot.Samples[0].Timestamp);
     }
 
+    // Saving and capture must both make progress while every observed snapshot remains decodable (#7).
     [Fact]
-    public void Snapshot_Duration_SpansFirstFrameToEndOfLast()
+    public async Task ConcurrentCaptureAndSnapshots_ProduceDecodableOrderedVideo()
     {
-        var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
-        AddSeconds(buffer, 2);
-
-        Assert.Equal(TimeSpan.FromSeconds(2), buffer.Snapshot().Duration);
-    }
-
-    [Fact]
-    public async Task AddAndSnapshot_FromDifferentThreads_AlwaysStartOnKeyframe()
-    {
+        // Arrange
         var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(1));
-        var stop = false;
-        var torn = false;
+        AddSeconds(buffer, 1);
+        using var round = new Barrier(2);
+        const int rounds = 100;
+        var snapshots = new List<ClipSnapshot>();
 
-        var reader = Task.Run(() =>
+        // Act: both workers enter each round together so the reader cannot miss the whole run.
+        var writer = Task.Run(() =>
         {
-            while (!Volatile.Read(ref stop))
+            for (var i = 0; i < rounds; i++)
             {
-                var samples = buffer.Snapshot().Samples;
-                torn |= samples.Count > 0 && !samples[0].IsKeyframe;
+                Assert.True(round.SignalAndWait(TimeSpan.FromSeconds(5)));
+                AddSeconds(buffer, 10, startSecond: 1 + i * 10);
             }
         });
+        var reader = Task.Run(() =>
+        {
+            for (var i = 0; i < rounds; i++)
+            {
+                Assert.True(round.SignalAndWait(TimeSpan.FromSeconds(5)));
+                snapshots.Add(buffer.Snapshot());
+            }
+        });
+        await Task.WhenAll(writer, reader).WaitAsync(TimeSpan.FromSeconds(10));
 
-        AddSeconds(buffer, 600);
-        Volatile.Write(ref stop, true);
-        await reader;
-
-        Assert.False(torn);
+        // Assert: inspect the saved snapshots after further writes as well as their original acquisition.
+        Assert.Equal(rounds, snapshots.Count);
+        Assert.All(snapshots, snapshot =>
+        {
+            Assert.NotEmpty(snapshot.Samples);
+            Assert.True(snapshot.Samples[0].IsKeyframe);
+            Assert.InRange(snapshot.Duration, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2));
+            var times = snapshot.Samples.Select(sample => sample.Timestamp).ToArray();
+            Assert.Equal(times.Order(), times);
+            Assert.Equal(times.Length, times.Distinct().Count());
+        });
     }
 
-    // Ten frames a second, a keyframe every second.
     private static void AddSeconds(RollingClipBuffer buffer, int seconds, int startSecond = 0)
     {
         for (var i = startSecond * 10; i < (startSecond + seconds) * 10; i++)
