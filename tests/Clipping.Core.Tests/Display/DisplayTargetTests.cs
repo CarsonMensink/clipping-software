@@ -11,7 +11,7 @@ public sealed class DisplayTargetTests
 
     private readonly FakeMonitorSource _source = new(_left, _main, _right);
 
-    // Listing attached monitors and choosing the initial display are separate consumer contracts.
+    // Monitor selection must offer every attached display.
     [Fact]
     public void GetAvailableMonitors_ReturnsMonitorsFromSource()
     {
@@ -22,7 +22,7 @@ public sealed class DisplayTargetTests
         Assert.Equal([_left, _main, _right], target.GetAvailableMonitors());
     }
 
-    // Listing attached monitors and choosing the initial display are separate consumer contracts.
+    // First launch must capture the primary display by default.
     [Fact]
     public void GetSelectedMonitor_WhenNothingSelected_ReturnsPrimary()
     {
@@ -39,9 +39,9 @@ public sealed class DisplayTargetTests
         Assert.Throws<InvalidOperationException>(() => new DisplayTarget(new FakeMonitorSource()));
     }
 
-    // Capture switches once to the requested device even if its persisted name uses different casing.
+    // Device-name casing must not prevent selecting the intended monitor.
     [Fact]
-    public void SelectMonitor_ChangesSelectionAndNotifiesOnlyOnce()
+    public void SelectMonitor_IgnoresDeviceNameCaseAndNotifiesCapture()
     {
         // Arrange
         using var target = new DisplayTarget(_source);
@@ -50,11 +50,28 @@ public sealed class DisplayTargetTests
 
         // Act
         target.SelectMonitor(@"\\.\display3");
-        target.SelectMonitor(_right.DeviceName);
 
         // Assert
         Assert.Equal(_right, target.GetSelectedMonitor());
         Assert.Equal([_right], raised);
+    }
+
+    // Re-selecting an explicitly chosen monitor must not interrupt its capture session.
+    [Fact]
+    public void SelectMonitor_WhenExplicitSelectionAlreadyActive_DoesNotNotify()
+    {
+        // Arrange
+        using var target = new DisplayTarget(_source);
+        target.SelectMonitor(_right.DeviceName);
+        var raised = new List<MonitorInfo>();
+        target.SelectionChanged += (_, monitor) => raised.Add(monitor);
+
+        // Act
+        target.SelectMonitor(_right.DeviceName);
+
+        // Assert
+        Assert.Equal(_right, target.GetSelectedMonitor());
+        Assert.Empty(raised);
     }
 
     // Choosing the default display explicitly must not interrupt capture on that same display.
@@ -129,7 +146,7 @@ public sealed class DisplayTargetTests
         Assert.False(raised);
     }
 
-    // Unplug fallback and reconnection policy can regress independently.
+    // Unplugging the selected display must notify capture to use the primary display.
     [Fact]
     public void MonitorsChanged_WhenSelectedMonitorRemoved_FallsBackToPrimaryAndRaises()
     {
@@ -147,7 +164,7 @@ public sealed class DisplayTargetTests
         Assert.Equal([_main], raised);
     }
 
-    // Unplug fallback and reconnection policy can regress independently.
+    // Reconnecting a display must not silently switch capture away from its fallback.
     [Fact]
     public void MonitorsChanged_WhenSelectedMonitorRemovedThenReattached_KeepsFollowingPrimary()
     {

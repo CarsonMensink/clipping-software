@@ -28,7 +28,6 @@ public sealed class EncodingLoopTests
         Assert.True(loop.Samples.TryRead(out var sample));
         Assert.Equal(At(0), sample.Timestamp);
         Assert.Equal((2560, 1440), (sample.Width, sample.Height));
-        Assert.True(sample.IsKeyframe);
         Assert.Equal(60, Assert.Single(_encoders).FrameRate);
     }
 

@@ -15,7 +15,7 @@ public sealed class FrameRateGateTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new FrameRateGate(frameRate));
     }
 
-    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
+    // Capture must begin immediately when the first frame arrives.
     [Fact]
     public void TryPass_FirstFrame_Passes()
     {
@@ -26,7 +26,7 @@ public sealed class FrameRateGateTests
         Assert.True(gate.TryPass(_start));
     }
 
-    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
+    // Excess monitor frames must not exceed the configured capture rate.
     [Fact]
     public void TryPass_FrameSoonAfterLast_IsSkipped()
     {
@@ -38,7 +38,7 @@ public sealed class FrameRateGateTests
         Assert.False(gate.TryPass(_start + TimeSpan.FromMilliseconds(4)));
     }
 
-    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
+    // A frame due at the next capture interval must not be dropped.
     [Fact]
     public void TryPass_FrameOneIntervalLater_Passes()
     {
@@ -50,7 +50,7 @@ public sealed class FrameRateGateTests
         Assert.True(gate.TryPass(_start + TimeSpan.FromSeconds(1.0 / 30)));
     }
 
-    // Capture admission is specified separately at startup, before its deadline, at its deadline, and for stale input.
+    // Stale frames must not move capture backward in time.
     [Fact]
     public void TryPass_FrameOlderThanLastPassed_IsSkipped()
     {

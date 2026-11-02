@@ -236,6 +236,7 @@ public sealed class JsonSettingsStoreTests : IDisposable
         Assert.True(failure is IOException or UnauthorizedAccessException);
         Assert.Equal(new AppSettings(), store.Settings);
         Assert.Empty(raised);
+        Assert.Equal([_filePath], Directory.GetFileSystemEntries(_directory));
 
         // Act: the destination becomes writable again.
         Directory.Delete(_filePath);

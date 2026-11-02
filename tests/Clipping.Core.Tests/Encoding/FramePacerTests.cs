@@ -18,7 +18,7 @@ public sealed class FramePacerTests
         Assert.Throws<ArgumentOutOfRangeException>(() => new FramePacer(frameRate));
     }
 
-    // Startup and an established timeline are distinct pacing states.
+    // The video timeline must preserve the first capture timestamp.
     [Fact]
     public void Place_FirstFrame_StartsTimelineAtItsTimestamp()
     {
@@ -33,7 +33,7 @@ public sealed class FramePacerTests
         Assert.Equal(_start, placement.Time);
     }
 
-    // Startup and an established timeline are distinct pacing states.
+    // Consecutive captured frames need no fabricated duplicates.
     [Fact]
     public void Place_FrameInNextSlot_HasNoRepeats()
     {
@@ -73,7 +73,7 @@ public sealed class FramePacerTests
         Assert.Equal(At(2), placement.Time);
     }
 
-    // Admission and rejection at the permitted lead boundary must fail independently.
+    // A slightly late frame can use the next available video slot.
     [Fact]
     public void Place_FrameWhoseSlotIsTaken_MovesToNextSlot()
     {
@@ -90,7 +90,7 @@ public sealed class FramePacerTests
         Assert.Equal(At(1), placement.Time);
     }
 
-    // Admission and rejection at the permitted lead boundary must fail independently.
+    // Crowded arrivals must not push video a full frame ahead of capture.
     [Fact]
     public void Place_FrameThatWouldRunAheadOfRealTime_IsDropped()
     {
@@ -125,7 +125,7 @@ public sealed class FramePacerTests
         Assert.Empty(pacer.FillUntil(_start));
     }
 
-    // Idle filling, repeated filling, live resumption, and stale fill requests are distinct contracts.
+    // Idle gameplay must still fill the video timeline through the requested time.
     [Fact]
     public void FillUntil_RepeatsLastFrameForEverySlotUpToTime()
     {
@@ -140,7 +140,7 @@ public sealed class FramePacerTests
         Assert.Equal([At(1), At(2), At(3)], repeats);
     }
 
-    // Idle filling, repeated filling, live resumption, and stale fill requests are distinct contracts.
+    // Repeated idle filling must not encode the same video slot twice.
     [Fact]
     public void FillUntil_CalledAgain_OnlyFillsNewSlots()
     {
@@ -156,7 +156,7 @@ public sealed class FramePacerTests
         Assert.Equal([At(3), At(4)], repeats);
     }
 
-    // Idle filling, repeated filling, live resumption, and stale fill requests are distinct contracts.
+    // Live capture must resume in the next slot after idle repeats.
     [Fact]
     public void FillUntil_ThenFrame_TakesSlotAfterFilledOnes()
     {
@@ -173,7 +173,7 @@ public sealed class FramePacerTests
         Assert.Equal(At(3), placement.Time);
     }
 
-    // Idle filling, repeated filling, live resumption, and stale fill requests are distinct contracts.
+    // A stale fill request must not duplicate already encoded video.
     [Fact]
     public void FillUntil_TimeInPast_ReturnsNothing()
     {

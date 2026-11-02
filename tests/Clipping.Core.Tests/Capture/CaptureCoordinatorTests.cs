@@ -108,6 +108,11 @@ public sealed class CaptureCoordinatorTests
 
         // Act
         _time.Advance(TimeSpan.FromMilliseconds(1));
+
+        // Assert
+        Assert.Equal(_main, _source.ActiveMonitor);
+
+        // Act: settling schedules one restart, rather than a repeating timer.
         _time.Advance(TimeSpan.FromSeconds(2));
 
         // Assert
@@ -218,6 +223,7 @@ public sealed class CaptureCoordinatorTests
         _time.Advance(TimeSpan.FromSeconds(2));
 
         // Assert
+        Assert.False(_target.HasSubscribers);
         Assert.Null(_source.ActiveMonitor);
         Assert.Equal([_main], _source.SuccessfulStarts);
         Assert.False(_source.Disposed);
