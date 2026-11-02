@@ -52,12 +52,9 @@ internal sealed class EncoderProgress(int slots, TimeSpan timeout) : IDisposable
     }
 
     // Background is a flag alongside Unstarted, so equality cannot determine whether Join is legal.
-    public static void JoinIfStarted(Thread thread)
+    public static bool JoinIfStarted(Thread thread, TimeSpan timeout)
     {
-        if ((thread.ThreadState & ThreadState.Unstarted) == 0)
-        {
-            thread.Join(TimeSpan.FromSeconds(2));
-        }
+        return (thread.ThreadState & ThreadState.Unstarted) != 0 || thread.Join(timeout);
     }
 
     // Called after the encoder's event thread has stopped using these signals.

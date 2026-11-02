@@ -9,7 +9,7 @@ public sealed class EncoderRecoveryTests
     public void JoinIfStarted_UnstartedBackgroundThread_DoesNotThrow()
     {
         var thread = new Thread(() => { }) { IsBackground = true };
-        EncoderProgress.JoinIfStarted(thread);
+        Assert.True(EncoderProgress.JoinIfStarted(thread, TimeSpan.Zero));
         Assert.True((thread.ThreadState & ThreadState.Unstarted) != 0);
     }
 
