@@ -17,4 +17,8 @@ public sealed record EncodedSample(
     bool IsKeyframe,
     int Width,
     int Height,
-    byte[] Data);
+    byte[] Data)
+{
+    /// <summary>Cached Annex B SPS/PPS for this encoder session, even after its first GOP is evicted.</summary>
+    public byte[]? SequenceHeader { get; init; }
+}

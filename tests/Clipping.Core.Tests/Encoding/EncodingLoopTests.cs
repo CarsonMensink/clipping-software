@@ -81,13 +81,15 @@ public sealed class EncodingLoopTests
     }
 
     [Fact]
-    public void Process_WhenEncoderFails_DropsItAndNextFrameStartsANewOne()
+    public void Process_WhenEncoderFails_RestartsAfterRetryDelay()
     {
-        using var loop = CreateLoop();
+        var clock = new FakeTimeProvider();
+        using var loop = CreateLoop(clock);
         loop.Process(Frame(1, At(0)));
         _encoders[0].FailNext = true;
 
         loop.Process(Frame(2, At(1)));
+        clock.Advance(EncodingLoop.RetryDelay);
         loop.Process(Frame(3, At(2)));
 
         Assert.True(_encoders[0].IsDisposed);
@@ -97,13 +99,15 @@ public sealed class EncodingLoopTests
     }
 
     [Fact]
-    public void Process_WhenEncoderFailsToStart_DropsFrameAndNextFrameTriesAgain()
+    public void Process_WhenEncoderFailsToStart_RetriesAfterDelay()
     {
-        using var loop = CreateLoop();
+        var clock = new FakeTimeProvider();
+        using var loop = CreateLoop(clock);
         loop.Process(Frame(1, At(0)));
         _failNextCreate = true;
 
         loop.Process(Frame(2, At(5), 1920, 1080));
+        clock.Advance(EncodingLoop.RetryDelay);
         loop.Process(Frame(3, At(6), 1920, 1080));
 
         Assert.True(_encoders[0].IsDisposed);
@@ -242,7 +246,7 @@ public sealed class EncodingLoopTests
 
         public bool IsDisposed { get; private set; }
 
-        public void Encode(CapturedFrame frame, TimeSpan timestamp)
+        public void Encode(CapturedFrame frame, TimeSpan timestamp, CancellationToken cancellationToken = default)
         {
             if (FailNext)
             {

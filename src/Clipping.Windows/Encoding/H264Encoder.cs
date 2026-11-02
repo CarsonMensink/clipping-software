@@ -46,20 +46,22 @@ internal sealed class H264Encoder : IVideoEncoder
 
     private readonly ChannelWriter<EncodedSample> _output;
 
-    // Counts NeedInput events not yet answered, and input slots whose output is out.
-    private readonly SemaphoreSlim _needInput = new(0);
-    private readonly SemaphoreSlim _freeSlots = new(InputSlots);
-    private readonly ManualResetEventSlim _drained = new();
+    // A driver stall must return control to the retry loop within a bounded interval.
+    private readonly EncoderProgress _progress;
+    private readonly H264ParameterSets _parameterSets = new();
+    private readonly ManualResetEventSlim _drained;
+    private readonly EncoderLifetime.Session _session;
     private readonly Thread _eventThread;
 
     private int _nextSlot;
     private volatile Exception? _failure;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     /// <param name="encoderActivate">
     /// A hardware H.264 encoder on the same GPU as <paramref name="device"/>. Can be reused for
     /// the next encoder once this one is disposed.
     /// </param>
+    /// <param name="lifetime">Keeps the activation reserved until earlier event processing and cleanup finish.</param>
     /// <param name="device">The device the frames' textures live on.</param>
     /// <param name="context">Its immediate context.</param>
     /// <param name="width">Width of the captured frames.</param>
@@ -70,6 +72,7 @@ internal sealed class H264Encoder : IVideoEncoder
     /// <exception cref="InvalidOperationException">The encoder couldn't be started.</exception>
     public H264Encoder(
         IMFActivate encoderActivate,
+        EncoderLifetime lifetime,
         ID3D11Device device,
         ID3D11DeviceContext context,
         int width,
@@ -80,6 +83,7 @@ internal sealed class H264Encoder : IVideoEncoder
     {
         ArgumentNullException.ThrowIfNull(encoderActivate);
         ArgumentNullException.ThrowIfNull(output);
+        ArgumentNullException.ThrowIfNull(lifetime);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bitrate);
 
         _output = output;
@@ -87,8 +91,12 @@ internal sealed class H264Encoder : IVideoEncoder
         _frameDuration = TimeSpan.TicksPerSecond / frameRate;
         _eventThread = new Thread(RunEvents) { IsBackground = true, Name = "H.264 encoder events" };
 
+        // Reserve before allocating resources or entering constructor cleanup; a blocked retry owns nothing.
+        _session = lifetime.Begin(_eventThread, ShutdownTransform, ReleaseResources);
         try
         {
+            _progress = new EncoderProgress(InputSlots, TimeSpan.FromSeconds(2));
+            _drained = new ManualResetEventSlim();
             _converter = new Nv12Converter(device, context, width, height, frameRate);
             for (var i = 0; i < InputSlots; i++)
             {
@@ -139,13 +147,23 @@ internal sealed class H264Encoder : IVideoEncoder
             _transform.ProcessMessage(TMessageType.MessageNotifyBeginStreaming, UIntPtr.Zero);
             _transform.ProcessMessage(TMessageType.MessageNotifyStartOfStream, UIntPtr.Zero);
         }
-        catch (Exception e) when (e is SharpGen.Runtime.SharpGenException or InvalidOperationException)
+        catch (Exception e)
         {
             _disposed = true;
-            Release();
+            try
+            {
+                Release();
+            }
+            catch (Exception cleanupFailure)
+            {
+                throw new InvalidOperationException("Couldn't start or clean up the encoder.",
+                    new AggregateException(e, cleanupFailure));
+            }
+
             throw new InvalidOperationException($"Couldn't start the encoder: {e.Message}", e);
         }
 
+        // Input and output must describe the same dimensions and timing to negotiate successfully.
         IMFMediaType CreateVideoType(Guid subtype, int rate)
         {
             var type = MediaFactory.MFCreateMediaType();
@@ -180,13 +198,22 @@ internal sealed class H264Encoder : IVideoEncoder
     /// <remarks>
     /// Converts the frame on the GPU before returning, so the caller can release it right after.
     /// </remarks>
-    public void Encode(CapturedFrame frame, TimeSpan timestamp)
+    public void Encode(CapturedFrame frame, TimeSpan timestamp, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(frame);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        _freeSlots.Wait();
-        _needInput.Wait();
+        try
+        {
+            _progress.WaitForInput(cancellationToken);
+        }
+        catch (Exception failure)
+        {
+            // Cancellation or a timeout must skip draining a transform that cannot make progress.
+            _failure = failure;
+            throw;
+        }
+
         ThrowIfFailed();
 
         try
@@ -204,8 +231,9 @@ internal sealed class H264Encoder : IVideoEncoder
 
             _transform.ProcessInput(0, sample, 0);
         }
-        catch (SharpGen.Runtime.SharpGenException e)
+        catch (Exception e)
         {
+            // Any submission failure retires the encoder without attempting to drain it.
             _failure = e;
             ThrowIfFailed();
         }
@@ -223,67 +251,97 @@ internal sealed class H264Encoder : IVideoEncoder
 
         _disposed = true;
 
-        if (_failure is null)
+        try
         {
-            try
+            if (_failure is null)
             {
-                _transform.ProcessMessage(TMessageType.MessageNotifyEndOfStream, UIntPtr.Zero);
-                _transform.ProcessMessage(TMessageType.MessageCommandDrain, UIntPtr.Zero);
-                _drained.Wait(TimeSpan.FromSeconds(2));
-            }
-            catch (SharpGen.Runtime.SharpGenException)
-            {
-                // Already broken; shutting down is all that's left.
+                try
+                {
+                    _transform.ProcessMessage(TMessageType.MessageNotifyEndOfStream, UIntPtr.Zero);
+                    _transform.ProcessMessage(TMessageType.MessageCommandDrain, UIntPtr.Zero);
+                    _drained.Wait(TimeSpan.FromSeconds(2));
+                }
+                catch (SharpGen.Runtime.SharpGenException)
+                {
+                    // Already broken; shutting down is all that's left.
+                }
             }
         }
-
-        Release();
+        finally
+        {
+            // Unexpected drain errors must still release GPU resources before recording retries.
+            Release();
+        }
     }
 
-    // Also cleans up after a constructor that failed partway, so any field may still be unset.
-    private void Release()
+    // Retirement suppresses late samples and retains resources if the worker outlives the join.
+    private void Release() => _session.Retire();
+
+    // Shutdown wakes GetEvent; the lifecycle still has to confirm that the managed worker exited.
+    private void ShutdownTransform()
     {
         if (_transform is not null)
         {
-            // Ends a GetEvent still waiting on the event thread.
-            MediaFactory.MFShutdownObject(_transform);
+            MediaFactory.MFShutdownObject(_transform).CheckError();
         }
-
-        if (_eventThread.ThreadState != ThreadState.Unstarted)
-        {
-            _eventThread.Join(TimeSpan.FromSeconds(2));
-        }
-
-        _events?.Dispose();
-        _transform?.Dispose();
-
-        // Without this the activate keeps handing back the encoder just shut down, and the
-        // next encoder, after a size change, fails to start.
-        _activate.ShutdownObject();
-
-        _deviceManager?.Dispose();
-        foreach (var texture in _inputs)
-        {
-            texture?.Dispose();
-        }
-
-        _converter?.Dispose();
-        _needInput.Dispose();
-        _freeSlots.Dispose();
-        _drained.Dispose();
     }
 
+    // Only called after worker exit, including deferred cleanup of a partially constructed encoder.
+    private void ReleaseResources()
+    {
+        List<Exception> failures = [];
+        Attempt(() => _events?.Dispose());
+        Attempt(() => _transform?.Dispose());
+
+        // Reactivation must create a fresh transform after a resize or failed startup.
+        Attempt(() => _activate.ShutdownObject());
+        Attempt(() => _deviceManager?.Dispose());
+        foreach (var texture in _inputs)
+        {
+            Attempt(() => texture?.Dispose());
+        }
+
+        Attempt(() => _converter?.Dispose());
+        Attempt(() => _progress?.Dispose());
+        Attempt(() => _drained?.Dispose());
+        if (failures.Count > 0)
+        {
+            throw new AggregateException("Couldn't release all encoder resources.", failures);
+        }
+
+        // One failed native release must not strand the remaining GPU resources.
+        void Attempt(Action release)
+        {
+            try
+            {
+                release();
+            }
+            catch (Exception failure)
+            {
+                failures.Add(failure);
+            }
+        }
+    }
+
+    // Error events carry their own failure status independently of GetEvent's return value.
     private void RunEvents()
     {
         try
         {
-            while (true)
+            while (!_session.IsRetired)
             {
                 using var mediaEvent = _events.GetEvent(0);
+                if (_session.IsRetired)
+                {
+                    return;
+                }
+
+                // GetEvent succeeding does not mean the operation reported by the event succeeded.
+                EncoderProgress.CheckEvent(mediaEvent.Status.Code, (MediaEventTypes)mediaEvent.EventType == MediaEventTypes.Error);
                 switch ((MediaEventTypes)mediaEvent.EventType)
                 {
                     case MediaEventTypes.TransformNeedInput:
-                        _needInput.Release();
+                        _session.RunIfActive(_progress.NeedInput);
                         break;
 
                     case MediaEventTypes.TransformHaveOutput:
@@ -291,7 +349,7 @@ internal sealed class H264Encoder : IVideoEncoder
                         break;
 
                     case MediaEventTypes.TransformDrainComplete:
-                        _drained.Set();
+                        _session.RunIfActive(_drained.Set);
                         return;
                 }
             }
@@ -304,14 +362,15 @@ internal sealed class H264Encoder : IVideoEncoder
         catch (Exception e)
         {
             _failure = e;
-            _drained.Set();
-
-            // Wakes an Encode waiting for input, so it sees the failure.
-            _needInput.Release();
-            _freeSlots.Release();
+            _session.RunIfActive(() =>
+            {
+                _drained.Set();
+                _progress.Fail(e);
+            });
         }
     }
 
+    // Output owns the compressed bytes and codec headers needed after this encoder is retired.
     private void ReadOutput()
     {
         var buffer = new OutputDataBuffer { StreamID = 0 };
@@ -329,6 +388,11 @@ internal sealed class H264Encoder : IVideoEncoder
             _transform.ProcessOutput(ProcessOutputFlags.None, 1, ref buffer, out _);
 
             using var sample = buffer.Sample!;
+            if (_session.IsRetired)
+            {
+                return;
+            }
+
             using var contiguous = sample.ConvertToContiguousBuffer();
             contiguous.Lock(out var data, out _, out var length);
             byte[] bytes;
@@ -342,14 +406,32 @@ internal sealed class H264Encoder : IVideoEncoder
                 contiguous.Unlock();
             }
 
+            // Some encoders send parameter sets only in the media type or the very first GOP.
+            var header = _parameterSets.Update(bytes);
+            if (header is null)
+            {
+                using var outputType = _transform.GetOutputCurrentType(0);
+                try
+                {
+                    header = _parameterSets.Update(outputType.GetBlob(MediaTypeAttributeKeys.MpegSequenceHeader));
+                }
+                catch (SharpGen.Runtime.SharpGenException e) when (e.HResult == unchecked((int)0xC00D36E6))
+                {
+                    // MF_E_ATTRIBUTENOTFOUND: wait for in-band SPS/PPS instead.
+                }
+            }
+
             var isKeyframe = IsKeyframe(sample);
-            _output.TryWrite(new EncodedSample(
+            var encoded = new EncodedSample(
                 TimeSpan.FromTicks(sample.SampleTime),
                 TimeSpan.FromTicks(sample.SampleDuration),
                 isKeyframe,
                 _converter.Width,
                 _converter.Height,
-                bytes));
+                bytes) { SequenceHeader = header };
+
+            // Only the short channel write is locked; retirement must never wait on a native call.
+            _session.RunIfActive(() => _output.TryWrite(encoded));
         }
         finally
         {
@@ -361,7 +443,7 @@ internal sealed class H264Encoder : IVideoEncoder
         }
 
         // No B-frames: this output is for the oldest input still inside the encoder.
-        _freeSlots.Release();
+        _session.RunIfActive(_progress.HaveOutput);
     }
 
     // Encoders may leave the flag off frames that aren't keyframes.

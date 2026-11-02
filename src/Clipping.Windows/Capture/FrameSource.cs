@@ -114,10 +114,24 @@ public class FrameSource : IFrameSource
                     {
                         // The monitor's resolution changed. Rebuild the pool and textures at the new
                         // size, and skip this frame: its buffer is still the old size.
-                        size = frame.ContentSize;
-                        framePool.Recreate(_device, PixelFormat, PoolBuffers, size);
-                        _textures!.Dispose();
-                        _textures = CaptureTextures.Create(_d3dDevice, size.Width, size.Height, TextureCount);
+                        var nextSize = frame.ContentSize;
+                        try
+                        {
+                            CaptureResize.Replace(
+                                ref _textures,
+                                () => CaptureTextures.Create(_d3dDevice, nextSize.Width, nextSize.Height, TextureCount),
+                                () =>
+                                {
+                                    framePool.Recreate(_device, PixelFormat, PoolBuffers, nextSize);
+                                    size = nextSize;
+                                });
+                        }
+                        catch (Exception failure)
+                        {
+                            // Keep the previous size and textures so the next frame retries the resize.
+                            Console.Error.WriteLine($"Capture resize failed: {failure}");
+                        }
+
                         return;
                     }
 

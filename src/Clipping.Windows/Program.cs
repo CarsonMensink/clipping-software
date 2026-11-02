@@ -39,10 +39,13 @@ internal static class Program
         captureCoordinator.Start();
 
         using var encoderActivate = FindEncoder(gpuDevice);
+        // Dispose before shared GPU/MF services; a retired worker keeps activation reserved until exit.
+        using var encoderLifetime = new EncoderLifetime(TimeSpan.FromSeconds(2));
         using var encodingLoop = new EncodingLoop(
             frameSource.Frames,
             (width, height, frameRate, output) => new H264Encoder(
                 encoderActivate,
+                encoderLifetime,
                 gpuDevice.Device,
                 gpuDevice.Context,
                 width,
@@ -51,6 +54,9 @@ internal static class Program
                 H264Encoder.SuggestBitrate(width, height, frameRate),
                 output),
             store.Settings.FrameRate);
+
+        // Recording failures must be visible even while the message loop keeps running.
+        encodingLoop.Failed += failure => Console.Error.WriteLine($"Recording failed; retrying: {failure}");
 
         using var stopEncoding = new CancellationTokenSource();
         var encoding = Task.Run(() => encodingLoop.RunAsync(stopEncoding.Token));

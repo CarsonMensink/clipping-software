@@ -21,8 +21,9 @@ public interface IVideoEncoder : IDisposable
     /// dispose it as soon as this returns.
     /// </param>
     /// <param name="timestamp">When the frame is shown in the video.</param>
+    /// <param name="cancellationToken">Interrupts a wait for hardware during shutdown.</param>
     /// <exception cref="InvalidOperationException">The encoder failed and can't be used again.</exception>
-    void Encode(CapturedFrame frame, TimeSpan timestamp);
+    void Encode(CapturedFrame frame, TimeSpan timestamp, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
