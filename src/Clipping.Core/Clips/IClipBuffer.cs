@@ -39,9 +39,17 @@ public interface IClipBuffer
 public sealed record ClipSnapshot(IReadOnlyList<EncodedSample> Samples)
 {
     /// <summary>
+    /// When the first frame starts; zero if the snapshot is empty.
+    /// </summary>
+    public TimeSpan Start => Samples.Count == 0 ? TimeSpan.Zero : Samples[0].Timestamp;
+
+    /// <summary>
+    /// When the last frame ends; zero if the snapshot is empty.
+    /// </summary>
+    public TimeSpan End => Samples.Count == 0 ? TimeSpan.Zero : Samples[^1].Timestamp + Samples[^1].Duration;
+
+    /// <summary>
     /// From the first frame's start to the last frame's end.
     /// </summary>
-    public TimeSpan Duration => Samples.Count == 0
-        ? TimeSpan.Zero
-        : Samples[^1].Timestamp + Samples[^1].Duration - Samples[0].Timestamp;
+    public TimeSpan Duration => End - Start;
 }

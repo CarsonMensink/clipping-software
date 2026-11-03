@@ -10,6 +10,7 @@ public sealed class ClipSaverTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "ClipSaverTests", Guid.NewGuid().ToString("N"));
     private readonly RollingClipBuffer _buffer = new(TimeSpan.FromSeconds(30));
     private readonly FakeWriter _writer = new();
+    private readonly FakeSourceResolver _sources = new();
     private readonly FakeSettingsStore _settings;
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 31, 22, 16, 5, TimeSpan.Zero));
 
@@ -37,12 +38,14 @@ public sealed class ClipSaverTests : IDisposable
         Assert.Empty(_writer.Written);
     }
 
-    // A saved highlight is available in the configured folder even on the first save (#8).
+    // A saved highlight is available in the configured folder even on the first save (#8),
+    // filed under the application it came from (#15).
     [Fact]
-    public async Task SaveAsync_WritesSnapshotToDatedFileInNewOutputDirectory()
+    public async Task SaveAsync_WritesSnapshotToDatedFileInSourceSubfolderOfNewOutputDirectory()
     {
         // Arrange
         FillBuffer();
+        _sources.Source = new ClipSource("Cyberpunk2077.exe", "Cyberpunk2077.exe", "Cyberpunk 2077");
         var saver = CreateSaver();
 
         // Act
@@ -50,7 +53,7 @@ public sealed class ClipSaverTests : IDisposable
 
         // Assert
         Assert.True(result.Succeeded);
-        Assert.Equal(Path.Combine(_directory, "clips", "Clip 2026-10-31 22-16-05.mp4"), result.Path);
+        Assert.Equal(Path.Combine(_directory, "clips", "Cyberpunk 2077", "Clip 2026-10-31 22-16-05.mp4"), result.Path);
         Assert.True(File.Exists(result.Path));
         Assert.Equal(TimeSpan.FromSeconds(2), result.Duration);
         var written = Assert.Single(_writer.Written);
@@ -67,8 +70,37 @@ public sealed class ClipSaverTests : IDisposable
         var first = await saver.SaveAsync();
         var second = await saver.SaveAsync();
 
-        Assert.Equal(Path.Combine(_directory, "clips", "Clip 2026-10-31 22-16-05 (2).mp4"), second.Path);
+        Assert.Equal(Path.Combine(_directory, "clips", ClipFolders.Unknown, "Clip 2026-10-31 22-16-05 (2).mp4"), second.Path);
         Assert.NotEqual(first.Path, second.Path);
+    }
+
+    [Fact]
+    public async Task SaveAsync_WhenSourceUnknown_SavesInUnknownSubfolder()
+    {
+        // Arrange
+        FillBuffer();
+        _sources.Source = null;
+
+        // Act
+        var result = await CreateSaver().SaveAsync();
+
+        // Assert
+        Assert.True(result.Succeeded);
+        Assert.Equal(Path.Combine(_directory, "clips", ClipFolders.Unknown), Path.GetDirectoryName(result.Path));
+    }
+
+    // The source is judged over the clip's own time span, not just the moment of saving.
+    [Fact]
+    public async Task SaveAsync_AsksForSourceOverTheClipsTimeSpan()
+    {
+        // Arrange
+        FillBuffer();
+
+        // Act
+        await CreateSaver().SaveAsync();
+
+        // Assert
+        Assert.Equal((TimeSpan.FromHours(5), TimeSpan.FromHours(5) + TimeSpan.FromSeconds(2)), _sources.AskedFor);
     }
 
     [Fact]
@@ -121,7 +153,7 @@ public sealed class ClipSaverTests : IDisposable
         Assert.Equal(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), CreateSaver().OutputDirectory);
     }
 
-    private ClipSaver CreateSaver() => new(_buffer, _writer, _settings, _time);
+    private ClipSaver CreateSaver() => new(_buffer, _writer, _settings, _sources, _time);
 
     private void FillBuffer()
     {
@@ -168,6 +200,19 @@ public sealed class ClipSaverTests : IDisposable
             {
                 Interlocked.Decrement(ref _active);
             }
+        }
+    }
+
+    private sealed class FakeSourceResolver : IClipSourceResolver
+    {
+        public ClipSource? Source { get; set; }
+
+        public (TimeSpan Start, TimeSpan End)? AskedFor { get; private set; }
+
+        public ClipSource? Resolve(TimeSpan start, TimeSpan end)
+        {
+            AskedFor = (start, end);
+            return Source;
         }
     }
 

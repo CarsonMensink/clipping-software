@@ -6,6 +6,7 @@ using System.Diagnostics;
 using Clipping.Core.Settings;
 using Clipping.Core.Shell;
 using Clipping.Windows.Capture;
+using Clipping.Windows.Clips;
 using Clipping.Windows.Display;
 using Clipping.Windows.Encoding;
 using Clipping.Windows.Graphics;
@@ -110,7 +111,11 @@ internal static class Program
             }
         });
 
-        var clipSaver = new ClipSaver(clipBuffer, new Mp4ClipWriter(), store);
+        // Notes once a second which application is on the captured monitor, so clips are filed under it.
+        using var clipSources = new ClipSourceTracker(
+            new CapturedMonitorProbe(displayTarget), log: loggerFactory.CreateLogger<ClipSourceTracker>());
+
+        var clipSaver = new ClipSaver(clipBuffer, new Mp4ClipWriter(), store, clipSources);
 
         // TEMP: the SelectedHotkey setting saves a clip and shows the result. #10 replaces this with the
         // real hotkey service, and #12 owns the save notification.
