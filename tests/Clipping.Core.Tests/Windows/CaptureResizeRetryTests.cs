@@ -106,6 +106,27 @@ public sealed class CaptureResizeRetryTests
         Assert.False(replacement.Disposed);
     }
 
+    // Recovery ends the backoff, so a later resolution change is handled on its first frame.
+    [Fact]
+    public void AfterRecovery_NextResizeIsNotDelayed()
+    {
+        // Arrange
+        var time = new FakeTimeProvider();
+        var retry = new CaptureResizeRetry(TimeSpan.FromSeconds(1), _ => { }, time);
+        Resource? current = new Resource();
+        retry.TryReplace(ref current, () => throw new IOException("GPU allocation failed."), () => { });
+        time.Advance(TimeSpan.FromSeconds(1));
+        retry.TryReplace(ref current, () => new Resource(), () => { });
+        var next = new Resource();
+
+        // Act
+        var resized = retry.TryReplace(ref current, () => next, () => { });
+
+        // Assert
+        Assert.True(resized);
+        Assert.Same(next, current);
+    }
+
     private sealed class Resource : IDisposable
     {
         public bool Disposed { get; private set; }
