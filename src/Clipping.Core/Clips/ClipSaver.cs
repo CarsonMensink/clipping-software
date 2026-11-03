@@ -7,7 +7,9 @@ namespace Clipping.Core.Clips;
 /// the application it was recorded from.
 /// </summary>
 /// <remarks>
-/// Clips whose application can't be identified go in the <see cref="ClipFolders.Unknown"/> subfolder.
+/// Each save empties the buffer, so a clip covers only the video since the previous one,
+/// up to the buffer's retention. Clips whose application can't be identified go in the
+/// <see cref="ClipFolders.Unknown"/> subfolder.
 /// <para>
 /// Saves run one at a time, so two in quick succession get different file names rather than
 /// racing for the same one. Failures come back as a result, never as an exception.
@@ -48,19 +50,20 @@ public sealed class ClipSaver
         _settings.Settings.OutputDirectory ?? Environment.GetFolderPath(Environment.SpecialFolder.MyVideos);
 
     /// <summary>
-    /// Snapshots the buffer and writes it to a new file in its application's subfolder of
-    /// <see cref="OutputDirectory"/>.
+    /// Takes the buffer's contents, emptying it, and writes them to a new file in its
+    /// application's subfolder of <see cref="OutputDirectory"/>.
     /// </summary>
     /// <remarks>
     /// The snapshot and its application are taken before waiting for an earlier save, so the clip
     /// covers the moment this was called.
+    /// Cancelling after that point discards the video taken, since the buffer is already empty.
     /// </remarks>
     public async Task<ClipSaveResult> SaveAsync(CancellationToken cancellationToken = default)
     {
-        var clip = _buffer.Snapshot();
+        var clip = _buffer.SnapshotAndClear();
         if (clip.Samples.Count == 0)
         {
-            return ClipSaveResult.Failed("Nothing has been captured yet.");
+            return ClipSaveResult.Failed("No new video to save yet.");
         }
 
         var source = _sources.Resolve(clip.Start, clip.End);
