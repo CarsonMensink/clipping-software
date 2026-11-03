@@ -23,6 +23,9 @@
     <Compile Include="../../src/Clipping.Windows/Encoding/ClipFileWrite.cs" Link="Windows/ClipFileWrite.cs" />
     <Compile Include="../../src/Clipping.Windows/Capture/CaptureResize.cs" Link="Windows/CaptureResize.cs" />
     <Compile Include="../../src/Clipping.Windows/Capture/CaptureResizeRetry.cs" Link="Windows/CaptureResizeRetry.cs" />
+    <Compile Include="../../src/Clipping.Windows/Shell/MenuLayout.cs" Link="Windows/MenuLayout.cs" />
+    <Compile Include="../../src/Clipping.Windows/Shell/SingleInstance.cs" Link="Windows/SingleInstance.cs" />
+    <Compile Include="../../src/Clipping.Windows/Logging/FileLoggerProvider.cs" Link="Windows/FileLoggerProvider.cs" />
   </ItemGroup>
 
   <ItemGroup>

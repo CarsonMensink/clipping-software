@@ -2,11 +2,16 @@
 using Clipping.Core.Clips;
 using Clipping.Core.Display;
 using Clipping.Core.Encoding;
+using System.Diagnostics;
 using Clipping.Core.Settings;
+using Clipping.Core.Shell;
 using Clipping.Windows.Capture;
 using Clipping.Windows.Display;
 using Clipping.Windows.Encoding;
 using Clipping.Windows.Graphics;
+using Clipping.Windows.Logging;
+using Clipping.Windows.Shell;
+using Microsoft.Extensions.Logging;
 
 namespace Clipping.Windows;
 
@@ -15,13 +20,45 @@ internal static class Program
     [STAThread]
     public static int Main()
     {
+        // A second launch only signals the running copy, which tells the user where it is.
+        using var singleInstance = SingleInstance.TryClaim();
+        if (singleInstance is null)
+        {
+            return 0;
+        }
+
         // Applies ApplicationHighDpiMode; must run before any Screen or window call.
         ApplicationConfiguration.Initialize();
 
-        var appData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        var path = Path.Combine(appData, "Clipping", "settings.json");
+        var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Clipping");
+        var logDirectory = Path.Combine(appData, "logs");
 
-        var store = new JsonSettingsStore(path);
+        // Created first and disposed last, so everything below can log, including its shutdown.
+        using var logFile = new FileLoggerProvider(logDirectory);
+        using var loggerFactory = new LoggerFactory([logFile]);
+        var log = loggerFactory.CreateLogger(typeof(Program).FullName!);
+
+        // There is no console, so a crash would otherwise leave no trace.
+        AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+            log.LogCritical(e.ExceptionObject as Exception, "Unhandled exception; the application is closing.");
+
+        // WinForms catches exceptions thrown on the UI thread (menu handlers, posted work, window
+        // hooks) before they become unhandled. Log them and keep running instead of showing its
+        // dialog. Must be set before any window is created.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => log.LogError(e.Exception, "UI thread exception; continuing.");
+
+        // Disposed after the pipeline below has drained, so the tray icon goes last.
+        using var shell = new TrayShell();
+        singleInstance.OnSecondLaunch(() => shell.Notifications.Show(
+            "Clipping is already running", "Find it in the notification area.", NotificationKind.Info));
+        shell.Menu.Add("Open log folder", MenuGroup.App, () =>
+        {
+            Directory.CreateDirectory(logDirectory);
+            Process.Start(new ProcessStartInfo { FileName = logDirectory, UseShellExecute = true });
+        });
+
+        var store = new JsonSettingsStore(Path.Combine(appData, "settings.json"));
 
         using var monitorSource = new ScreenMonitorSource();
         using var displayTarget = new DisplayTarget(monitorSource);
@@ -32,7 +69,8 @@ internal static class Program
         // Started before, and shut down after, everything that encodes.
         using var mediaFoundation = new MediaFoundationRuntime();
 
-        using var frameSource = new FrameSource(store, gpuDevice.Direct3DDevice, gpuDevice.Device, gpuDevice.Context);
+        using var frameSource = new FrameSource(
+            store, gpuDevice.Direct3DDevice, gpuDevice.Device, gpuDevice.Context, loggerFactory.CreateLogger<FrameSource>());
 
         // Follows the selected monitor; disposed before frameSource, since it calls into it.
         using var captureCoordinator = new CaptureCoordinator(displayTarget, frameSource);
@@ -55,8 +93,8 @@ internal static class Program
                 output),
             store.Settings.FrameRate);
 
-        // Recording failures must be visible even while the message loop keeps running.
-        encodingLoop.Failed += failure => Console.Error.WriteLine($"Recording failed; retrying: {failure}");
+        // Recording failures must be recorded even while the message loop keeps running.
+        encodingLoop.Failed += failure => log.LogError(failure, "Recording failed; retrying.");
 
         using var stopEncoding = new CancellationTokenSource();
         var encoding = Task.Run(() => encodingLoop.RunAsync(stopEncoding.Token));
@@ -74,17 +112,24 @@ internal static class Program
 
         var clipSaver = new ClipSaver(clipBuffer, new Mp4ClipWriter(), store);
 
-        // TEMP: the SelectedHotkey setting saves a clip and prints the result. #10 replaces this with the real hotkey service.
-        using var saveHotkey = new TempSaveHotkey(store.Settings.SelectedHotkey, async () =>
+        // TEMP: the SelectedHotkey setting saves a clip and shows the result. #10 replaces this with the
+        // real hotkey service, and #12 owns the save notification.
+        using var saveHotkey = new TempSaveHotkey(store.Settings.SelectedHotkey, log, async () =>
         {
             var result = await clipSaver.SaveAsync();
-            Console.WriteLine(result.Succeeded
-                ? $"TEMP: saved {result.Duration.TotalSeconds:0.0} s to {result.Path}"
-                : $"TEMP: save failed: {result.Error}");
+            if (result.Succeeded)
+            {
+                shell.Notifications.Show(
+                    "TEMP: clip saved", $"{result.Duration.TotalSeconds:0.0} s to {result.Path}", NotificationKind.Info);
+            }
+            else
+            {
+                shell.Notifications.Show("TEMP: save failed", result.Error!, NotificationKind.Error);
+            }
         });
 
-        // Pumps Windows messages so display changes are delivered. #17 will pass the tray here.
-        Application.Run();
+        // Pumps Windows messages, so display changes and hotkeys are delivered, until Exit is chosen.
+        shell.Run();
 
         stopEncoding.Cancel();
         encoding.Wait();
@@ -125,7 +170,7 @@ internal static class Program
 
         private readonly Func<Task> _onPressed;
 
-        public TempSaveHotkey(string combination, Func<Task> onPressed)
+        public TempSaveHotkey(string combination, ILogger log, Func<Task> onPressed)
         {
             _onPressed = onPressed;
             CreateHandle(new CreateParams());
@@ -147,11 +192,11 @@ internal static class Program
 
             if (key == Keys.None || !RegisterHotKey(Handle, 1, modifiers, (uint)key))
             {
-                Console.WriteLine($"TEMP: couldn't register {combination}; it may be invalid or owned by another app.");
+                log.LogWarning("TEMP: couldn't register {Combination}; it may be invalid or owned by another app.", combination);
                 return;
             }
 
-            Console.WriteLine($"TEMP: press {combination} to save a clip");
+            log.LogInformation("TEMP: press {Combination} to save a clip", combination);
         }
 
         public void Dispose()

@@ -3,6 +3,7 @@ using Clipping.Core.Capture;
 using Clipping.Core.Display;
 using Clipping.Core.Settings;
 using Clipping.Windows.Graphics;
+using Microsoft.Extensions.Logging;
 using Vortice.Direct3D11;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
@@ -29,6 +30,7 @@ public class FrameSource : IFrameSource
     private readonly IDirect3DDevice _device;
     private readonly ID3D11Device _d3dDevice;
     private readonly ID3D11DeviceContext _context;
+    private readonly ILogger<FrameSource> _logger;
 
     // Guards the capture fields below against FrameArrived, which runs on a WGC worker thread.
     private readonly Lock _lock = new();
@@ -48,12 +50,19 @@ public class FrameSource : IFrameSource
     /// <param name="device">The shared device as WinRT sees it, for capture.</param>
     /// <param name="d3dDevice">The same device, for creating textures.</param>
     /// <param name="context">The device's immediate context, for copying frames.</param>
-    public FrameSource(ISettingsStore settings, IDirect3DDevice device, ID3D11Device d3dDevice, ID3D11DeviceContext context)
+    /// <param name="logger">Records capture failures that are retried rather than thrown.</param>
+    public FrameSource(
+        ISettingsStore settings,
+        IDirect3DDevice device,
+        ID3D11Device d3dDevice,
+        ID3D11DeviceContext context,
+        ILogger<FrameSource> logger)
     {
         _settings = settings;
         _device = device;
         _d3dDevice = d3dDevice;
         _context = context;
+        _logger = logger;
         _frames = Channel.CreateBounded<CapturedFrame>(
             new BoundedChannelOptions(QueueCapacity)
             {
@@ -90,7 +99,7 @@ public class FrameSource : IFrameSource
             // Only touched inside the handler, under the lock.
             var gate = new FrameRateGate(_settings.Settings.FrameRate);
             var resize = new CaptureResizeRetry(
-                ResizeRetryDelay, failure => Console.Error.WriteLine($"Capture resize failed: {failure}"));
+                ResizeRetryDelay, failure => _logger.LogError(failure, "Capture resize failed; retrying after a delay."));
 
             framePool.FrameArrived += (_, _) =>
             {
