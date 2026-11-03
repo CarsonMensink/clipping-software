@@ -26,6 +26,7 @@
     <Compile Include="../../src/Clipping.Windows/Shell/MenuLayout.cs" Link="Windows/MenuLayout.cs" />
     <Compile Include="../../src/Clipping.Windows/Shell/SingleInstance.cs" Link="Windows/SingleInstance.cs" />
     <Compile Include="../../src/Clipping.Windows/Logging/FileLoggerProvider.cs" Link="Windows/FileLoggerProvider.cs" />
+    <Compile Include="../../src/Clipping.Windows/Clips/WindowPicker.cs" Link="Windows/WindowPicker.cs" />
   </ItemGroup>
 
   <ItemGroup>
