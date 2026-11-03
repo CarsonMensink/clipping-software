@@ -21,6 +21,9 @@ public class FrameSource : IFrameSource
     private const DirectXPixelFormat PixelFormat = DirectXPixelFormat.B8G8R8A8UIntNormalized;
     private const int PoolBuffers = 2;
 
+    // After a failed resize, frames needing it are dropped for this long before trying again.
+    private static readonly TimeSpan ResizeRetryDelay = TimeSpan.FromSeconds(1);
+
     private readonly Channel<CapturedFrame> _frames;
     private readonly ISettingsStore _settings;
     private readonly IDirect3DDevice _device;
@@ -86,6 +89,8 @@ public class FrameSource : IFrameSource
 
             // Only touched inside the handler, under the lock.
             var gate = new FrameRateGate(_settings.Settings.FrameRate);
+            var resize = new CaptureResizeRetry(
+                ResizeRetryDelay, failure => Console.Error.WriteLine($"Capture resize failed: {failure}"));
 
             framePool.FrameArrived += (_, _) =>
             {
@@ -115,22 +120,17 @@ public class FrameSource : IFrameSource
                         // The monitor's resolution changed. Rebuild the pool and textures at the new
                         // size, and skip this frame: its buffer is still the old size.
                         var nextSize = frame.ContentSize;
-                        try
-                        {
-                            CaptureResize.Replace(
-                                ref _textures,
-                                () => CaptureTextures.Create(_d3dDevice, nextSize.Width, nextSize.Height, TextureCount),
-                                () =>
-                                {
-                                    framePool.Recreate(_device, PixelFormat, PoolBuffers, nextSize);
-                                    size = nextSize;
-                                });
-                        }
-                        catch (Exception failure)
-                        {
-                            // Keep the previous size and textures so the next frame retries the resize.
-                            Console.Error.WriteLine($"Capture resize failed: {failure}");
-                        }
+
+                        // A failure keeps the previous size and textures; frames during the retry
+                        // delay are dropped without another attempt.
+                        resize.TryReplace(
+                            ref _textures,
+                            () => CaptureTextures.Create(_d3dDevice, nextSize.Width, nextSize.Height, TextureCount),
+                            () =>
+                            {
+                                framePool.Recreate(_device, PixelFormat, PoolBuffers, nextSize);
+                                size = nextSize;
+                            });
 
                         return;
                     }
