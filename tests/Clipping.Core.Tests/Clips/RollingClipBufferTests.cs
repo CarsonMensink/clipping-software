@@ -159,6 +159,80 @@ public sealed class RollingClipBufferTests
         Assert.Equal(At(0), snapshot.Samples[0].Timestamp);
     }
 
+    [Fact]
+    public void SnapshotAndClear_ReturnsContentsAndEmptiesBuffer()
+    {
+        var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
+        AddSeconds(buffer, 2);
+
+        var snapshot = buffer.SnapshotAndClear();
+
+        Assert.Equal(Enumerable.Range(0, 20), Frames(snapshot));
+        Assert.Empty(buffer.Snapshot().Samples);
+        Assert.Equal(TimeSpan.Zero, buffer.RetainedDuration);
+    }
+
+    // A clip taken right after another holds only what came after it, not the overlap.
+    [Fact]
+    public void SnapshotAndClear_ThenAdds_KeepsOnlyNewVideoFromNextKeyframe()
+    {
+        // Arrange
+        var buffer = new RollingClipBuffer(TimeSpan.FromSeconds(3));
+        AddSeconds(buffer, 2);
+        buffer.Add(Sample(20, keyframe: true));
+        buffer.Add(Sample(21, keyframe: false));
+
+        // Act: the clear lands partway through a GOP.
+        buffer.SnapshotAndClear();
+        buffer.Add(Sample(22, keyframe: false));
+        AddSeconds(buffer, 1, startSecond: 3);
+
+        // Assert: the rest of the cut GOP can't be decoded, so the next clip starts on a keyframe.
+        Assert.Equal(Enumerable.Range(30, 10), Frames(buffer.Snapshot()));
+    }
+
+    // A save racing capture must neither lose a frame nor put one in two clips.
+    [Fact]
+    public async Task ConcurrentCaptureAndSnapshotAndClear_HandsOutEachFrameExactlyOnce()
+    {
+        // Arrange: every frame is a keyframe, so none are dropped for want of one after a clear.
+        var buffer = new RollingClipBuffer(TimeSpan.FromHours(1));
+        using var round = new Barrier(2);
+        const int rounds = 100;
+        const int framesPerRound = 10;
+        var snapshots = new List<ClipSnapshot>();
+
+        // Act
+        var writer = Task.Run(() =>
+        {
+            for (var i = 0; i < rounds; i++)
+            {
+                Assert.True(round.SignalAndWait(TimeSpan.FromSeconds(5)));
+                for (var j = 0; j < framesPerRound; j++)
+                {
+                    buffer.Add(Sample(i * framesPerRound + j, keyframe: true));
+                }
+            }
+        });
+        var reader = Task.Run(() =>
+        {
+            for (var i = 0; i < rounds; i++)
+            {
+                Assert.True(round.SignalAndWait(TimeSpan.FromSeconds(5)));
+                snapshots.Add(buffer.SnapshotAndClear());
+            }
+        });
+        await Task.WhenAll(writer, reader).WaitAsync(TimeSpan.FromSeconds(10));
+        snapshots.Add(buffer.SnapshotAndClear());
+
+        // Assert
+        Assert.Empty(buffer.Snapshot().Samples);
+        // Timestamps rather than Frames(), whose one-byte payload wraps at 256.
+        static TimeSpan[] Times(ClipSnapshot snapshot) => snapshot.Samples.Select(s => s.Timestamp).ToArray();
+        Assert.All(snapshots, snapshot => Assert.Equal(Times(snapshot).Order(), Times(snapshot)));
+        Assert.Equal(Enumerable.Range(0, rounds * framesPerRound).Select(At), snapshots.SelectMany(Times).Order());
+    }
+
     // Saving and capture must both make progress while every observed snapshot remains decodable (#7).
     [Fact]
     public async Task ConcurrentCaptureAndSnapshots_ProduceDecodableOrderedVideo()

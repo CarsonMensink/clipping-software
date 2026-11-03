@@ -120,6 +120,17 @@ public sealed class RollingClipBuffer : IClipBuffer
         }
     }
 
+    /// <inheritdoc/>
+    public ClipSnapshot SnapshotAndClear()
+    {
+        lock (_lock)
+        {
+            var snapshot = Snapshot();
+            _gops.Clear();
+            return snapshot;
+        }
+    }
+
     private TimeSpan End()
     {
         var last = _gops.Last!.Value[^1];
