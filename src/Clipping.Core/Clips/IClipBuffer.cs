@@ -30,6 +30,16 @@ public interface IClipBuffer
     /// change the snapshot.
     /// </summary>
     ClipSnapshot Snapshot();
+
+    /// <summary>
+    /// Copies out what the buffer holds, like <see cref="Snapshot"/>, and empties it in the
+    /// same step, so the next clip starts after this one instead of overlapping it.
+    /// </summary>
+    /// <remarks>
+    /// Frames added afterwards are kept only from the next keyframe on, so the next clip
+    /// starts up to one keyframe interval after this one ends.
+    /// </remarks>
+    ClipSnapshot SnapshotAndClear();
 }
 
 /// <summary>

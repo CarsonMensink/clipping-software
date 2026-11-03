@@ -65,6 +65,7 @@ public sealed class ClipSaverTests : IDisposable
         var saver = CreateSaver();
 
         var first = await saver.SaveAsync();
+        FillBuffer();
         var second = await saver.SaveAsync();
 
         Assert.Equal(Path.Combine(_directory, "clips", "Clip 2026-10-31 22-16-05 (2).mp4"), second.Path);
@@ -107,10 +108,48 @@ public sealed class ClipSaverTests : IDisposable
         var saver = CreateSaver();
         _writer.Delay = TimeSpan.FromMilliseconds(50);
 
-        var results = await Task.WhenAll(saver.SaveAsync(), saver.SaveAsync(), saver.SaveAsync());
+        // Each save takes the buffer before it waits, so refill it between them.
+        var first = saver.SaveAsync();
+        FillBuffer();
+        var second = saver.SaveAsync();
+        FillBuffer();
+        var third = saver.SaveAsync();
+        var results = await Task.WhenAll(first, second, third);
 
         Assert.Equal(1, _writer.MaxConcurrent);
         Assert.Equal(3, results.Select(r => r.Path).Distinct().Count());
+    }
+
+    // Like other clipping apps, a second clip starts where the first ended rather than overlapping it.
+    [Fact]
+    public async Task SaveAsync_AfterSave_ClipHoldsOnlyNewVideo()
+    {
+        // Arrange
+        FillBuffer();
+        var saver = CreateSaver();
+        await saver.SaveAsync();
+
+        // Act
+        FillBuffer(seconds: 1, startSecond: 2);
+        var result = await saver.SaveAsync();
+
+        // Assert
+        Assert.True(result.Succeeded);
+        Assert.Equal(TimeSpan.FromSeconds(1), result.Duration);
+        Assert.Equal(TimeSpan.FromHours(5) + TimeSpan.FromSeconds(2), _writer.Written[^1].Clip.Samples[0].Timestamp);
+    }
+
+    [Fact]
+    public async Task SaveAsync_WithNothingNewSinceLastSave_FailsWithoutWriting()
+    {
+        FillBuffer();
+        var saver = CreateSaver();
+        await saver.SaveAsync();
+
+        var result = await saver.SaveAsync();
+
+        Assert.False(result.Succeeded);
+        Assert.Single(_writer.Written);
     }
 
     [Fact]
@@ -123,10 +162,11 @@ public sealed class ClipSaverTests : IDisposable
 
     private ClipSaver CreateSaver() => new(_buffer, _writer, _settings, _time);
 
-    private void FillBuffer()
+    // Ten frames a second, with a keyframe each second.
+    private void FillBuffer(int seconds = 2, int startSecond = 0)
     {
         var frame = TimeSpan.FromTicks(TimeSpan.TicksPerSecond / 10);
-        for (var i = 0; i < 20; i++)
+        for (var i = startSecond * 10; i < (startSecond + seconds) * 10; i++)
         {
             _buffer.Add(new EncodedSample(TimeSpan.FromHours(5) + frame * i, frame, i % 10 == 0, 2560, 1440, [1]));
         }
