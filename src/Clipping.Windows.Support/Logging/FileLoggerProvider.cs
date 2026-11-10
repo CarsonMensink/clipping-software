@@ -120,7 +120,6 @@ internal sealed class FileLoggerProvider : ILoggerProvider
 
     private void DeleteOldFiles()
     {
-        // The date format sorts by name, so the newest files are last.
         var old = Directory.GetFiles(_directory, $"{FilePrefix}*{FileExtension}")
             .Order(StringComparer.OrdinalIgnoreCase)
             .SkipLast(_filesKept);

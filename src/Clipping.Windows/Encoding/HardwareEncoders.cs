@@ -13,14 +13,14 @@ internal static class HardwareEncoders
     /// </summary>
     /// <param name="vendorId">
     /// Only list encoders from this GPU vendor, such as 0x10DE for NVIDIA, so they can read the
-    /// device's textures directly. <see langword="null"/> to list every vendor's.
+    /// device's textures directly.
     /// </param>
     /// <returns>Activators for the encoders. The caller disposes each one.</returns>
     /// <remarks>
     /// Matches by vendor because hardware encoders report no adapter before they are activated.
     /// Two GPUs from the same vendor would both match.
     /// </remarks>
-    public static IReadOnlyList<IMFActivate> FindH264(uint? vendorId)
+    private static IReadOnlyList<IMFActivate> FindH264(uint vendorId)
     {
         var output = new RegisterTypeInfo { GuidMajorType = MediaTypeGuids.Video, GuidSubtype = VideoFormatGuids.H264 };
         var flags = (uint)(EnumFlag.EnumFlagHardware | EnumFlag.EnumFlagSortandfilter);
@@ -35,7 +35,7 @@ internal static class HardwareEncoders
             {
                 // Takes over the reference the array holds.
                 var encoder = new IMFActivate(Marshal.ReadIntPtr(array, i * IntPtr.Size));
-                if (vendorId is null || GetVendorId(encoder) == vendorId)
+                if (GetVendorId(encoder) == vendorId)
                 {
                     encoders.Add(encoder);
                 }
@@ -53,17 +53,28 @@ internal static class HardwareEncoders
         }
     }
 
-    /// <summary>
-    /// The encoder's display name, such as "NVIDIA H.264 Encoder MFT".
-    /// </summary>
-    public static string GetName(IMFActivate encoder) =>
-        encoder.GetAllocatedString(TransformAttributeKeys.MftFriendlyNameAttribute) ?? "(unnamed)";
+    // Selection owns the spare activations so callers only manage the encoder they use.
+    public static IMFActivate SelectH264(uint vendorId)
+    {
+        var encoders = FindH264(vendorId);
+        if (encoders.Count == 0)
+        {
+            throw new InvalidOperationException("The GPU has no hardware H.264 encoder.");
+        }
+
+        foreach (var spare in encoders.Skip(1))
+        {
+            spare.Dispose();
+        }
+
+        return encoders[0];
+    }
 
     /// <summary>
     /// The PCI vendor ID of the GPU a hardware encoder runs on, or <see langword="null"/> if it
     /// doesn't say.
     /// </summary>
-    public static uint? GetVendorId(IMFActivate encoder)
+    private static uint? GetVendorId(IMFActivate encoder)
     {
         string? id;
         try

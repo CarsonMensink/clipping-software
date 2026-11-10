@@ -27,13 +27,7 @@ internal sealed class Mp4ClipWriter : IClipWriter
             throw new ArgumentException("A clip must start on a keyframe.", nameof(clip));
         }
 
-        return Task.Run(() => WriteOrDelete(clip, path, cancellationToken), cancellationToken);
-    }
-
-    // Dispose the native writer before failed-file cleanup tries to remove its output.
-    private static void WriteOrDelete(ClipSnapshot clip, string path, CancellationToken cancellationToken)
-    {
-        ClipFileWrite.WriteOrDelete(path, () => Write(clip, path, cancellationToken));
+        return Task.Run(() => ClipFileWrite.WriteOrDelete(path, () => Write(clip, path, cancellationToken)), cancellationToken);
     }
 
     // Compressed samples pass through unchanged, with timestamps rebased for standalone playback.
@@ -72,7 +66,6 @@ internal sealed class Mp4ClipWriter : IClipWriter
             using var sample = MediaFactory.MFCreateSample();
             sample.AddBuffer(buffer);
 
-            // Rebased so the clip starts at zero.
             sample.SampleTime = (encoded.Timestamp - first.Timestamp).Ticks;
             sample.SampleDuration = encoded.Duration.Ticks;
             sample.Set(SampleAttributeKeys.CleanPoint, encoded.IsKeyframe ? 1u : 0u);
@@ -94,18 +87,11 @@ internal sealed class Mp4ClipWriter : IClipWriter
 
         var header = first.SequenceHeader ?? new H264ParameterSets().Update(first.Data)
             ?? throw new IOException("The clip has no complete SPS/PPS sequence header.");
-        var type = MediaFactory.MFCreateMediaType();
+        var type = VideoMediaTypes.Create(VideoFormatGuids.H264, first.Width, first.Height, frameRate);
         try
         {
-            type.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-            type.Set(MediaTypeAttributeKeys.Subtype, VideoFormatGuids.H264);
-            type.Set(MediaTypeAttributeKeys.FrameSize, Pack(first.Width, first.Height));
-            type.Set(MediaTypeAttributeKeys.FrameRate, Pack(frameRate, 1));
-            type.Set(MediaTypeAttributeKeys.PixelAspectRatio, Pack(1, 1));
-            type.Set(MediaTypeAttributeKeys.InterlaceMode, (uint)VideoInterlaceMode.Progressive);
             type.Set(MediaTypeAttributeKeys.AvgBitrate, bitrate);
 
-            // Cached headers survive eviction of the encoder's first GOP.
             type.SetBlob(MediaTypeAttributeKeys.MpegSequenceHeader, header);
             return type;
         }
@@ -116,5 +102,4 @@ internal sealed class Mp4ClipWriter : IClipWriter
         }
     }
 
-    private static ulong Pack(int high, int low) => ((ulong)(uint)high << 32) | (uint)low;
 }

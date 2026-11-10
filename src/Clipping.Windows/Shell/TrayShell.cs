@@ -5,14 +5,13 @@ namespace Clipping.Windows.Shell;
 
 /// <summary>
 /// Hosts the application in the notification area: the tray icon, its menu, notifications,
-/// prompts, and the hidden window whose thread runs the message loop.
+/// and the hidden window whose thread runs the message loop.
 /// </summary>
 /// <remarks>
-/// The only component that touches WinForms UI. Create, run, and dispose it on one STA thread.
-/// Features receive the interface they need: <see cref="Menu"/>, <see cref="Notifications"/>,
-/// <see cref="Prompts"/>, or <see cref="MessageWindow"/>.
+/// Create, run, and dispose it on one STA thread. Features receive only the menu or
+/// notification interface they need.
 /// </remarks>
-internal sealed class TrayShell : IAppShell, IDisposable
+internal sealed class TrayShell : IDisposable
 {
     // Sorts after every MenuGroup, so Exit is always last.
     private const MenuGroup ExitGroup = (MenuGroup)int.MaxValue;
@@ -43,7 +42,6 @@ internal sealed class TrayShell : IAppShell, IDisposable
         _icon.MouseClick += OnIconClicked;
 
         Notifications = new BalloonNotifications(_icon, _window);
-        Prompts = new MessageBoxPrompt(_window);
 
         Menu.Add("Exit", ExitGroup, RequestExit);
     }
@@ -52,15 +50,11 @@ internal sealed class TrayShell : IAppShell, IDisposable
 
     public INotificationService Notifications { get; }
 
-    public IMessagePrompt Prompts { get; }
-
-    public IMessageWindow MessageWindow => _window;
-
-    /// <inheritdoc />
+    // The recorder stays alive until the tray Exit action ends this message loop.
     public void Run() => Application.Run();
 
-    /// <inheritdoc />
-    public void RequestExit() => _window.Post(Application.ExitThread);
+    // Queue Exit after earlier UI actions so shutdown begins on the shell thread.
+    private void RequestExit() => _window.Post(Application.ExitThread);
 
     /// <summary>
     /// Removes the tray icon and destroys the window. Call on the shell's thread after

@@ -76,7 +76,6 @@ public sealed class ClipSourceTracker : IClipSourceResolver, IDisposable
             totals[source.Id] = (source, time + (until - from), until);
         }
 
-        // On a tie, the application seen most recently wins.
         return totals.Count == 0
             ? null
             : totals.Values.MaxBy(total => (total.Time, total.LastSeen)).Source;
@@ -97,8 +96,6 @@ public sealed class ClipSourceTracker : IClipSourceResolver, IDisposable
 
         try
         {
-            // Stamped before the check, which can take a while the first time a program is seen.
-            // Clip timestamps count from the same origin as GetTimestamp.
             var now = _time.GetElapsedTime(0, _time.GetTimestamp());
 
             ClipSource? source;

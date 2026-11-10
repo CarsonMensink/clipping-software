@@ -96,7 +96,6 @@ public class FrameSource : IFrameSource
             var framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(_device, PixelFormat, PoolBuffers, size);
             _framePool = framePool;
 
-            // Only touched inside the handler, under the lock.
             var gate = new FrameRateGate(_settings.Settings.FrameRate);
             var resize = new CaptureResizeRetry(
                 ResizeRetryDelay, failure => _logger.LogError(failure, "Capture resize failed; retrying after a delay."));
@@ -111,7 +110,6 @@ public class FrameSource : IFrameSource
                         return;
                     }
 
-                    // using allows this to return the buffer to the pool once out of scope.
                     using var frame = framePool.TryGetNextFrame();
                     if (frame is null)
                     {
@@ -144,7 +142,6 @@ public class FrameSource : IFrameSource
                         return;
                     }
 
-                    // Every texture is queued or held by the reader; drop this frame.
                     if (!_textures!.TryRent(out var lease))
                     {
                         return;
@@ -166,7 +163,6 @@ public class FrameSource : IFrameSource
                         throw;
                     }
 
-                    // Fails only once Dispose has completed the channel.
                     if (!_frames.Writer.TryWrite(captured))
                     {
                         captured.Dispose();
@@ -224,8 +220,11 @@ public class FrameSource : IFrameSource
 
         StopCapture();
 
-        // Ends the reader's ReadAllAsync loop once it has read the frames still queued;
-        // the reader still owns and disposes those.
+        // Shutdown may cancel encoding before it reads the queue; return those texture leases too.
         _frames.Writer.TryComplete();
+        while (_frames.Reader.TryRead(out var frame))
+        {
+            frame.Dispose();
+        }
     }
 }

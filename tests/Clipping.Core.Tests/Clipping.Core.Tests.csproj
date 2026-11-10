@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -16,25 +16,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- These production helpers contain no Windows APIs and can run in host regression tests. -->
-    <Compile Include="../../src/Clipping.Windows/Encoding/EncoderLifetime.cs" Link="Windows/EncoderLifetime.cs" />
-    <Compile Include="../../src/Clipping.Windows/Encoding/EncoderProgress.cs" Link="Windows/EncoderProgress.cs" />
-    <Compile Include="../../src/Clipping.Windows/Encoding/H264ParameterSets.cs" Link="Windows/H264ParameterSets.cs" />
-    <Compile Include="../../src/Clipping.Windows/Encoding/ClipFileWrite.cs" Link="Windows/ClipFileWrite.cs" />
-    <Compile Include="../../src/Clipping.Windows/Capture/CaptureResize.cs" Link="Windows/CaptureResize.cs" />
-    <Compile Include="../../src/Clipping.Windows/Capture/CaptureResizeRetry.cs" Link="Windows/CaptureResizeRetry.cs" />
-    <Compile Include="../../src/Clipping.Windows/Shell/MenuLayout.cs" Link="Windows/MenuLayout.cs" />
-    <Compile Include="../../src/Clipping.Windows/Shell/SingleInstance.cs" Link="Windows/SingleInstance.cs" />
-    <Compile Include="../../src/Clipping.Windows/Logging/FileLoggerProvider.cs" Link="Windows/FileLoggerProvider.cs" />
-    <Compile Include="../../src/Clipping.Windows/Clips/WindowPicker.cs" Link="Windows/WindowPicker.cs" />
-  </ItemGroup>
-
-  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Clipping.Core\Clipping.Core.csproj" />
+    <ProjectReference Include="../../src/Clipping.Windows.Support/Clipping.Windows.Support.csproj" />
   </ItemGroup>
 
 </Project>

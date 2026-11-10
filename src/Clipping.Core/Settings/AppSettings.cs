@@ -59,4 +59,24 @@ public sealed record AppSettings
     /// </remarks>
     /// <value>Defaults to <c>60</c>.</value>
     public int FrameRate { get; init; } = 60;
+
+    // Reject invalid edits before persistence so the active recorder never receives unusable limits.
+    internal void Validate()
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(BufferLength, MinBufferLength);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(BufferLength, MaxBufferLength);
+        ArgumentOutOfRangeException.ThrowIfLessThan(FrameRate, MinFrameRate);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(FrameRate, MaxFrameRate);
+    }
+
+    // Preserve valid preferences from hand-edited files while restoring invalid limits to defaults.
+    internal AppSettings WithValidLimits()
+    {
+        var defaults = new AppSettings();
+        return this with
+        {
+            BufferLength = BufferLength is >= MinBufferLength and <= MaxBufferLength ? BufferLength : defaults.BufferLength,
+            FrameRate = FrameRate is >= MinFrameRate and <= MaxFrameRate ? FrameRate : defaults.FrameRate,
+        };
+    }
 }
