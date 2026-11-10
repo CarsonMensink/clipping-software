@@ -31,8 +31,12 @@ public sealed record AppSettings
     public string? SelectedMonitor { get; init; }
     
     /// <summary>
-    /// Key combination that saves the current clip.
+    /// Key combination that saves the current clip: modifiers, then one key.
     /// </summary>
+    /// <remarks>
+    /// Change it through <see cref="Hotkeys.SaveHotkey.Rebind"/>, which registers the new
+    /// combination before saving it, rather than through <see cref="ISettingsStore.Update"/>.
+    /// </remarks>
     /// <value>Defaults to <c>Alt+P</c>.</value>
     public string SelectedHotkey { get; init; } = "Alt+P";
     
