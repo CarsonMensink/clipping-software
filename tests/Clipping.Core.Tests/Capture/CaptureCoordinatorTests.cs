@@ -238,6 +238,8 @@ public sealed class CaptureCoordinatorTests
 
         public event EventHandler<MonitorInfo>? SelectionChanged;
 
+        public event EventHandler? MonitorsChanged { add { } remove { } }
+
         public bool HasSubscribers => SelectionChanged is not null;
 
         public MonitorInfo GetSelectedMonitor() => Selected;

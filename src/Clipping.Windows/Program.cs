@@ -64,6 +64,9 @@ internal static class Program
         using var monitorSource = new ScreenMonitorSource();
         using var displayTarget = new DisplayTarget(monitorSource);
 
+        // Restores the saved monitor, so it must exist before capture starts below.
+        using var monitorMenu = new MonitorMenu(displayTarget, store, shell.Menu, shell.Notifications);
+
         // Shared by capture and encoding; a texture is only usable on the device that made it.
         using var gpuDevice = new GpuDevice();
 
