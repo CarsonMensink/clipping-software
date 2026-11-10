@@ -61,8 +61,8 @@ public sealed class SaveHotkey : IDisposable
     /// </summary>
     /// <remarks>
     /// All or nothing: the new combination is registered first and the old one stays active until
-    /// the setting is saved. If any step fails, the exception propagates and both the setting and
-    /// the active hotkey are left as they were.
+    /// the setting is saved. Registration or saving failures leave both unchanged. If a settings
+    /// notification throws after saving, both use the new combination and the exception propagates.
     /// </remarks>
     /// <exception cref="HotkeyUnavailableException">The combination is invalid or already in use.</exception>
     public void Rebind(string combination)
@@ -79,21 +79,25 @@ public sealed class SaveHotkey : IDisposable
         // 1. Register the new combination while the old one keeps working.
         var replacement = Bind(combination);
 
-        // 2. Persist it. Update leaves the settings unchanged if it throws.
+        // 2. Persist it. A Changed handler can throw after the setting has already been saved.
         try
         {
             _settings.Update(s => s with { SelectedHotkey = combination });
         }
-        catch
+        finally
         {
-            replacement.Registration.Dispose();
-            throw;
+            if (_settings.Settings.SelectedHotkey == combination)
+            {
+                // 3. Match the committed setting, then 4. release the old combination.
+                var previous = _active;
+                _active = replacement;
+                previous?.Registration.Dispose();
+            }
+            else
+            {
+                replacement.Registration.Dispose();
+            }
         }
-
-        // 3. Switch over, then 4. release the old combination.
-        var previous = _active;
-        _active = replacement;
-        previous?.Registration.Dispose();
     }
 
     /// <summary>

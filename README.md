@@ -11,7 +11,7 @@ A Windows tray recorder that keeps recent hardware-encoded video in memory and s
 
 `Program` creates shared GPU and Media Foundation services before the recording. Capture stops first at shutdown; `BufferedRecording` then joins encoding, flushes the encoder, and finishes buffering. Shared native services outlive that work. `VideoMediaTypes` owns the video attributes shared by live encoding and MP4 output. `AppSettings` owns numeric preference limits and validity policies.
 
-`SaveHotkey` keeps the save hotkey registered to `AppSettings.SelectedHotkey` through `IHotkeyService` (`RegisterHotKey` on Windows). `Rebind` is all or nothing: the new combination is registered and saved before the old one is released, and any failure leaves both as they were.
+`SaveHotkey` keeps the save hotkey registered to `AppSettings.SelectedHotkey` through `IHotkeyService` (`RegisterHotKey` on Windows). `Rebind` is all or nothing: the new combination is registered and saved before the old one is released. Registration or saving failures leave both unchanged. If a settings notification throws after saving, both use the new combination and the exception propagates.
 
 ## Build and verify
 

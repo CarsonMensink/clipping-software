@@ -138,6 +138,30 @@ public sealed class SaveHotkeyTests : IDisposable
         Assert.Equal("Alt+P", hotkey.ActiveCombination);
     }
 
+    [Fact]
+    public void Rebind_WhenNotificationThrows_KeepsTheNewHotkeyAndPersistedSettingTogether()
+    {
+        // Arrange
+        var store = new JsonSettingsStore(_settingsPath);
+        var saves = 0;
+        using var hotkey = new SaveHotkey(_hotkeys, store, _notifications, () => saves++);
+        var failure = new InvalidOperationException("Notification failed.");
+        store.Changed += (_, _) => throw failure;
+
+        // Act
+        var error = Assert.Throws<InvalidOperationException>(() => hotkey.Rebind("Ctrl+Shift+S"));
+        _hotkeys.Press("Alt+P");
+        _hotkeys.Press("Ctrl+Shift+S");
+
+        // Assert
+        Assert.Same(failure, error);
+        Assert.Equal(1, saves);
+        Assert.Equal(["Ctrl+Shift+S"], _hotkeys.Registered);
+        Assert.Equal("Ctrl+Shift+S", hotkey.ActiveCombination);
+        Assert.Equal("Ctrl+Shift+S", store.Settings.SelectedHotkey);
+        Assert.Equal("Ctrl+Shift+S", new JsonSettingsStore(_settingsPath).Settings.SelectedHotkey);
+    }
+
     // Registering a combination we already own would be reported as "in use" by ourselves.
     [Fact]
     public void Rebind_ToTheCurrentCombinationSpelledDifferently_KeepsItWorking()
