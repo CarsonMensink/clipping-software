@@ -1,6 +1,7 @@
 using Clipping.Core.Capture;
 using Clipping.Core.Clips;
 using Clipping.Core.Display;
+using Clipping.Core.Hotkeys;
 using System.Diagnostics;
 using Clipping.Core.Settings;
 using Clipping.Core.Shell;
@@ -103,9 +104,18 @@ internal static class Program
 
         var clipSaver = new ClipSaver(recording.Buffer, new Mp4ClipWriter(), store, clipSources);
 
-        // TEMP: the SelectedHotkey setting saves a clip and shows the result. #10 replaces this with the
-        // real hotkey service, and #12 owns the save notification.
-        using var saveHotkey = new TempSaveHotkey(store.Settings.SelectedHotkey, log, async () =>
+        // Created on this thread, which runs the message loop, so hotkey presses are delivered here.
+        using var hotkeys = new HotkeyService();
+
+        // Saving runs asynchronously so a hotkey press never blocks the message loop.
+        // TEMP: #12 owns the save notification.
+        using var saveHotkey = new SaveHotkey(hotkeys, store, shell.Notifications, () => _ = SaveClipAsync());
+        if (saveHotkey.ActiveCombination is { } combination)
+        {
+            log.LogInformation("Press {Combination} to save a clip.", combination);
+        }
+
+        async Task SaveClipAsync()
         {
             var result = await clipSaver.SaveAsync();
             if (result.Succeeded)
@@ -117,7 +127,7 @@ internal static class Program
             {
                 shell.Notifications.Show("TEMP: save failed", result.Error!, NotificationKind.Error);
             }
-        });
+        }
 
         // Pumps Windows messages, so display changes and hotkeys are delivered, until Exit is chosen.
         shell.Run();
