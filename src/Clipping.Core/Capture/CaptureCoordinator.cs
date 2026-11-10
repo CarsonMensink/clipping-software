@@ -30,7 +30,6 @@ public sealed class CaptureCoordinator : IDisposable
     // Serializes Start/Stop with SelectionChanged and the restart timer, which run on any thread.
     private readonly Lock _lock = new();
 
-    // True between Start and Stop, including while a restart is pending or has failed.
     private bool _started;
     private bool _restartPending;
     private bool _disposed;

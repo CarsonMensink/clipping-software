@@ -116,7 +116,7 @@ internal sealed class H264Encoder : IVideoEncoder
             _transform.ProcessMessage(MessageSetD3DManager, (UIntPtr)(ulong)_deviceManager.NativePointer);
 
             // An encoder takes its output type first, then an input type that fits it.
-            using (var outputType = CreateVideoType(VideoFormatGuids.H264, frameRate))
+            using (var outputType = VideoMediaTypes.Create(VideoFormatGuids.H264, _converter.Width, _converter.Height, frameRate))
             {
                 outputType.Set(MediaTypeAttributeKeys.AvgBitrate, (uint)bitrate);
                 outputType.Set(MediaTypeAttributeKeys.Mpeg2Profile, ProfileHigh);
@@ -132,7 +132,7 @@ internal sealed class H264Encoder : IVideoEncoder
                 (CodecApi.GopSize, (uint)frameRate),
                 (CodecApi.LowLatencyMode, true));
 
-            using (var inputType = CreateVideoType(VideoFormatGuids.NV12, frameRate))
+            using (var inputType = VideoMediaTypes.Create(VideoFormatGuids.NV12, _converter.Width, _converter.Height, frameRate))
             {
                 _transform.SetInputType(0, inputType, 0);
             }
@@ -152,7 +152,7 @@ internal sealed class H264Encoder : IVideoEncoder
             _disposed = true;
             try
             {
-                Release();
+                _session.Retire();
             }
             catch (Exception cleanupFailure)
             {
@@ -163,18 +163,6 @@ internal sealed class H264Encoder : IVideoEncoder
             throw new InvalidOperationException($"Couldn't start the encoder: {e.Message}", e);
         }
 
-        // Input and output must describe the same dimensions and timing to negotiate successfully.
-        IMFMediaType CreateVideoType(Guid subtype, int rate)
-        {
-            var type = MediaFactory.MFCreateMediaType();
-            type.Set(MediaTypeAttributeKeys.MajorType, MediaTypeGuids.Video);
-            type.Set(MediaTypeAttributeKeys.Subtype, subtype);
-            type.Set(MediaTypeAttributeKeys.FrameSize, Pack(_converter.Width, _converter.Height));
-            type.Set(MediaTypeAttributeKeys.FrameRate, Pack(rate, 1));
-            type.Set(MediaTypeAttributeKeys.PixelAspectRatio, Pack(1, 1));
-            type.Set(MediaTypeAttributeKeys.InterlaceMode, (uint)VideoInterlaceMode.Progressive);
-            return type;
-        }
     }
 
     /// <summary>
@@ -270,12 +258,9 @@ internal sealed class H264Encoder : IVideoEncoder
         finally
         {
             // Unexpected drain errors must still release GPU resources before recording retries.
-            Release();
+            _session.Retire();
         }
     }
-
-    // Retirement suppresses late samples and retains resources if the worker outlives the join.
-    private void Release() => _session.Retire();
 
     // Shutdown wakes GetEvent; the lifecycle still has to confirm that the managed worker exited.
     private void ShutdownTransform()
@@ -467,5 +452,4 @@ internal sealed class H264Encoder : IVideoEncoder
         }
     }
 
-    private static ulong Pack(int high, int low) => ((ulong)(uint)high << 32) | (uint)low;
 }

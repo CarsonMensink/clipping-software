@@ -19,10 +19,11 @@
 
     <ItemGroup>
         <ProjectReference Include="..\Clipping.Core\Clipping.Core.csproj" />
+        <ProjectReference Include="../Clipping.Windows.Support/Clipping.Windows.Support.csproj" />
     </ItemGroup>
 
     <ItemGroup>
-        <!-- LoggerFactory and ILogger<T>; the file provider is in Logging/. -->
+        <!-- LoggerFactory and ILogger<T>; the file provider is in Clipping.Windows.Support/Logging/. -->
         <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
         <!-- D3D11 and DXGI bindings; pulls in Vortice.DXGI. -->
         <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />

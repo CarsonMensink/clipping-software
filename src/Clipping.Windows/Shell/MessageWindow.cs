@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
-using Clipping.Core.Shell;
 
 namespace Clipping.Windows.Shell;
 
@@ -12,7 +11,7 @@ namespace Clipping.Windows.Shell;
 /// Also how the shell gets onto its UI thread: <see cref="Post"/> queues work and wakes the
 /// window with a private message.
 /// </remarks>
-internal sealed class MessageWindow : NativeWindow, IMessageWindow, IDisposable
+internal sealed class MessageWindow : NativeWindow, IDisposable
 {
     private const int WM_APP = 0x8000;
     private const int RunQueuedMessage = WM_APP + 1;
@@ -21,17 +20,12 @@ internal sealed class MessageWindow : NativeWindow, IMessageWindow, IDisposable
     private static readonly nint MessageOnlyParent = -3;
 
     private readonly ConcurrentQueue<Action> _queue = new();
-    private readonly int _threadId;
     private readonly Lock _lock = new();
 
-    // Guards _hooks against concurrent AddHook calls, and Post against Dispose.
-    // _hooks is replaced, never mutated, so WndProc can iterate it without the lock.
-    private Func<uint, nint, nint, bool>[] _hooks = [];
     private volatile bool _disposed;
 
     public MessageWindow()
     {
-        _threadId = Environment.CurrentManagedThreadId;
         CreateHandle(new CreateParams { Parent = MessageOnlyParent });
     }
 
@@ -54,70 +48,12 @@ internal sealed class MessageWindow : NativeWindow, IMessageWindow, IDisposable
         }
     }
 
-    /// <inheritdoc />
-    public IDisposable AddHook(Func<uint, nint, nint, bool> hook)
-    {
-        ArgumentNullException.ThrowIfNull(hook);
-
-        lock (_lock)
-        {
-            _hooks = [.. _hooks, hook];
-        }
-
-        return new HookRegistration(this, hook);
-    }
-
-    /// <inheritdoc />
-    public Task<T> InvokeAsync<T>(Func<T> work)
-    {
-        ArgumentNullException.ThrowIfNull(work);
-
-        if (Environment.CurrentManagedThreadId == _threadId)
-        {
-            try
-            {
-                return Task.FromResult(work());
-            }
-            catch (Exception failure)
-            {
-                return Task.FromException<T>(failure);
-            }
-        }
-
-        var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        Post(() =>
-        {
-            try
-            {
-                completion.SetResult(work());
-            }
-            catch (Exception failure)
-            {
-                completion.SetException(failure);
-            }
-        });
-
-        return completion.Task;
-    }
-
-    /// <inheritdoc />
-    public Task InvokeAsync(Action work)
-    {
-        ArgumentNullException.ThrowIfNull(work);
-
-        return InvokeAsync(() =>
-        {
-            work();
-            return true;
-        });
-    }
-
     /// <summary>
     /// Destroys the window. Must be called on the window's thread.
     /// </summary>
     public void Dispose()
     {
-        // The lock is re-entrant, so a hook that posts while the window is destroyed can't deadlock.
+        // Posts cannot race with destruction of the native window handle.
         lock (_lock)
         {
             _disposed = true;
@@ -133,18 +69,10 @@ internal sealed class MessageWindow : NativeWindow, IMessageWindow, IDisposable
             return;
         }
 
-        foreach (var hook in _hooks)
-        {
-            if (hook((uint)m.Msg, m.WParam, m.LParam))
-            {
-                m.Result = 0;
-                return;
-            }
-        }
-
         base.WndProc(ref m);
     }
 
+    // A throwing UI action must not prevent later queued actions from being delivered.
     private void RunQueued()
     {
         try
@@ -162,19 +90,6 @@ internal sealed class MessageWindow : NativeWindow, IMessageWindow, IDisposable
                 PostMessage(Handle, RunQueuedMessage, 0, 0);
             }
         }
-    }
-
-    private void RemoveHook(Func<uint, nint, nint, bool> hook)
-    {
-        lock (_lock)
-        {
-            _hooks = [.. _hooks.Where(h => h != hook)];
-        }
-    }
-
-    private sealed class HookRegistration(MessageWindow window, Func<uint, nint, nint, bool> hook) : IDisposable
-    {
-        public void Dispose() => window.RemoveHook(hook);
     }
 
     [DllImport("user32.dll", SetLastError = true)]

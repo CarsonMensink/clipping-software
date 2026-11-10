@@ -1,7 +1,6 @@
-﻿using Clipping.Core.Capture;
+using Clipping.Core.Capture;
 using Clipping.Core.Clips;
 using Clipping.Core.Display;
-using Clipping.Core.Encoding;
 using System.Diagnostics;
 using Clipping.Core.Settings;
 using Clipping.Core.Shell;
@@ -76,14 +75,10 @@ internal static class Program
         using var frameSource = new FrameSource(
             store, gpuDevice.Direct3DDevice, gpuDevice.Device, gpuDevice.Context, loggerFactory.CreateLogger<FrameSource>());
 
-        // Follows the selected monitor; disposed before frameSource, since it calls into it.
-        using var captureCoordinator = new CaptureCoordinator(displayTarget, frameSource);
-        captureCoordinator.Start();
-
-        using var encoderActivate = FindEncoder(gpuDevice);
+        using var encoderActivate = HardwareEncoders.SelectH264(gpuDevice.AdapterVendorId);
         // Dispose before shared GPU/MF services; a retired worker keeps activation reserved until exit.
         using var encoderLifetime = new EncoderLifetime(TimeSpan.FromSeconds(2));
-        using var encodingLoop = new EncodingLoop(
+        using var recording = new BufferedRecording(
             frameSource.Frames,
             (width, height, frameRate, output) => new H264Encoder(
                 encoderActivate,
@@ -95,30 +90,18 @@ internal static class Program
                 frameRate,
                 H264Encoder.SuggestBitrate(width, height, frameRate),
                 output),
-            store.Settings.FrameRate);
+            store,
+            failure => log.LogError(failure, "Recording failed; retrying."));
 
-        // Recording failures must be recorded even while the message loop keeps running.
-        encodingLoop.Failed += failure => log.LogError(failure, "Recording failed; retrying.");
-
-        using var stopEncoding = new CancellationTokenSource();
-        var encoding = Task.Run(() => encodingLoop.RunAsync(stopEncoding.Token));
-
-        // Holds the last BufferLength seconds of encoded video, following the setting as it changes.
-        var clipBuffer = new RollingClipBuffer(TimeSpan.FromSeconds(store.Settings.BufferLength));
-        store.Changed += (_, _) => clipBuffer.Retention = TimeSpan.FromSeconds(store.Settings.BufferLength);
-        var buffering = Task.Run(async () =>
-        {
-            await foreach (var sample in encodingLoop.Samples.ReadAllAsync())
-            {
-                clipBuffer.Add(sample);
-            }
-        });
+        // Capture stops before recording drains, while the GPU remains available to both.
+        using var captureCoordinator = new CaptureCoordinator(displayTarget, frameSource);
+        captureCoordinator.Start();
 
         // Notes once a second which application is on the captured monitor, so clips are filed under it.
         using var clipSources = new ClipSourceTracker(
             new CapturedMonitorProbe(displayTarget), log: loggerFactory.CreateLogger<ClipSourceTracker>());
 
-        var clipSaver = new ClipSaver(clipBuffer, new Mp4ClipWriter(), store, clipSources);
+        var clipSaver = new ClipSaver(recording.Buffer, new Mp4ClipWriter(), store, clipSources);
 
         // TEMP: the SelectedHotkey setting saves a clip and shows the result. #10 replaces this with the
         // real hotkey service, and #12 owns the save notification.
@@ -139,94 +122,6 @@ internal static class Program
         // Pumps Windows messages, so display changes and hotkeys are delivered, until Exit is chosen.
         shell.Run();
 
-        stopEncoding.Cancel();
-        encoding.Wait();
-        encodingLoop.Dispose();
-        buffering.Wait();
-
         return 0;
-    }
-
-    /// <summary>
-    /// The best hardware H.264 encoder on the GPU that captures, so it can read its textures.
-    /// </summary>
-    private static Vortice.MediaFoundation.IMFActivate FindEncoder(GpuDevice gpuDevice)
-    {
-        var encoders = HardwareEncoders.FindH264(gpuDevice.AdapterVendorId);
-        if (encoders.Count == 0)
-        {
-            throw new InvalidOperationException("The GPU has no hardware H.264 encoder.");
-        }
-
-        foreach (var spare in encoders.Skip(1))
-        {
-            spare.Dispose();
-        }
-
-        return encoders[0];
-    }
-
-    // TEMP: a bare hotkey for testing saves, read once at startup. Remove once #10 adds the hotkey service.
-    private sealed class TempSaveHotkey : NativeWindow, IDisposable
-    {
-        private const int WM_HOTKEY = 0x0312;
-        private const uint MOD_ALT = 0x0001;
-        private const uint MOD_CONTROL = 0x0002;
-        private const uint MOD_SHIFT = 0x0004;
-        private const uint MOD_WIN = 0x0008;
-        private const uint MOD_NOREPEAT = 0x4000;
-
-        private readonly Func<Task> _onPressed;
-
-        public TempSaveHotkey(string combination, ILogger log, Func<Task> onPressed)
-        {
-            _onPressed = onPressed;
-            CreateHandle(new CreateParams());
-
-            // "Alt+P", "Ctrl+Shift+S": modifiers, then a key named as in System.Windows.Forms.Keys.
-            var modifiers = MOD_NOREPEAT;
-            var key = Keys.None;
-            foreach (var part in combination.Split('+', StringSplitOptions.TrimEntries))
-            {
-                switch (part.ToUpperInvariant())
-                {
-                    case "ALT": modifiers |= MOD_ALT; break;
-                    case "CTRL" or "CONTROL": modifiers |= MOD_CONTROL; break;
-                    case "SHIFT": modifiers |= MOD_SHIFT; break;
-                    case "WIN": modifiers |= MOD_WIN; break;
-                    default: Enum.TryParse(part, ignoreCase: true, out key); break;
-                }
-            }
-
-            if (key == Keys.None || !RegisterHotKey(Handle, 1, modifiers, (uint)key))
-            {
-                log.LogWarning("TEMP: couldn't register {Combination}; it may be invalid or owned by another app.", combination);
-                return;
-            }
-
-            log.LogInformation("TEMP: press {Combination} to save a clip", combination);
-        }
-
-        public void Dispose()
-        {
-            UnregisterHotKey(Handle, 1);
-            DestroyHandle();
-        }
-
-        protected override void WndProc(ref Message m)
-        {
-            if (m.Msg == WM_HOTKEY)
-            {
-                _ = _onPressed();
-            }
-
-            base.WndProc(ref m);
-        }
-
-        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
-        private static extern bool RegisterHotKey(IntPtr window, int id, uint modifiers, uint key);
-
-        [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
-        private static extern bool UnregisterHotKey(IntPtr window, int id);
     }
 }

@@ -93,11 +93,9 @@ public sealed class RollingClipBuffer : IClipBuffer
             }
             else
             {
-                // Nothing to decode it against.
                 return;
             }
 
-            // Drop the oldest GOP while the ones after it still cover the retention by themselves.
             while (_gops.First!.Next is { } second && End() - second.Value[0].Timestamp >= _retention)
             {
                 _gops.RemoveFirst();

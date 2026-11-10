@@ -22,7 +22,7 @@ public sealed class JsonSettingsStore : ISettingsStore
         Settings = Load(filePath);
     }
 
-    /// <inheritdoc />so 
+    /// <inheritdoc />
     public event EventHandler<SettingsChangedEventArgs>? Changed;
 
     /// <inheritdoc />
@@ -39,10 +39,7 @@ public sealed class JsonSettingsStore : ISettingsStore
             updatedSettings = change.Invoke(previousSettings)
                 ?? throw new InvalidOperationException("The settings change returned null.");
 
-            ArgumentOutOfRangeException.ThrowIfLessThan(updatedSettings.BufferLength, AppSettings.MinBufferLength);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(updatedSettings.BufferLength, AppSettings.MaxBufferLength);
-            ArgumentOutOfRangeException.ThrowIfLessThan(updatedSettings.FrameRate, AppSettings.MinFrameRate);
-            ArgumentOutOfRangeException.ThrowIfGreaterThan(updatedSettings.FrameRate, AppSettings.MaxFrameRate);
+            updatedSettings.Validate();
 
             // Throws on failure, leaving Settings unchanged and Changed unraised.
             Save(updatedSettings);
@@ -69,19 +66,7 @@ public sealed class JsonSettingsStore : ISettingsStore
             var json = File.ReadAllText(filePath);
             var settings = JsonSerializer.Deserialize<AppSettings>(json, _jsonOptions) ?? new AppSettings();
 
-            // A hand-edited file can hold out-of-range values; reset just those settings.
-            var defaults = new AppSettings();
-            if (settings.BufferLength is < AppSettings.MinBufferLength or > AppSettings.MaxBufferLength)
-            {
-                settings = settings with { BufferLength = defaults.BufferLength };
-            }
-
-            if (settings.FrameRate is < AppSettings.MinFrameRate or > AppSettings.MaxFrameRate)
-            {
-                settings = settings with { FrameRate = defaults.FrameRate };
-            }
-
-            return settings;
+            return settings.WithValidLimits();
         }
         catch (Exception e) when (e is JsonException or IOException or UnauthorizedAccessException)
         {
@@ -99,7 +84,6 @@ public sealed class JsonSettingsStore : ISettingsStore
 
         var tempPath = _filePath + ".tmp";
 
-        // We either write the entire file or none of it.
         try
         {
             File.WriteAllText(tempPath, JsonSerializer.Serialize(settings, _jsonOptions));

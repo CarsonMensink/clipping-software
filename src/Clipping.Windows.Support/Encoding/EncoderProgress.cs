@@ -28,7 +28,6 @@ internal sealed class EncoderProgress(int slots, TimeSpan timeout) : IDisposable
         }
     }
 
-    // NeedInput events permit exactly one more frame submission.
     public void NeedInput() => _input.Release();
 
     // Output retires the oldest input texture, allowing it to be reused safely.

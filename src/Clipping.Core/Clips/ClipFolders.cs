@@ -59,13 +59,11 @@ public static class ClipFolders
         var stem = source is null ? null : Sanitize(Path.GetFileNameWithoutExtension(source.Executable));
         var name = (source is null ? null : Sanitize(source.DisplayName)) ?? stem ?? Unknown;
 
-        // Unknown sources share one owner.
         var owner = source?.Id ?? "";
 
         // A problem with the output folder itself fails the save rather than every name in turn.
         Directory.CreateDirectory(root);
 
-        // Unknown sources always use the Unknown name, so there's nothing to look for.
         if (source is not null && FolderOwnedBy(root, owner) is { } existing)
         {
             return existing;
@@ -195,7 +193,6 @@ public static class ClipFolders
     {
         try
         {
-            // Reads the entry itself, without following it.
             return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
         }
         catch (Exception e) when (e is FileNotFoundException or DirectoryNotFoundException)
