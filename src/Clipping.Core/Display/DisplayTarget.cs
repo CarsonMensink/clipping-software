@@ -35,6 +35,9 @@ public sealed class DisplayTarget : IDisplayTarget, IDisposable
     public event EventHandler<MonitorInfo>? SelectionChanged;
 
     /// <inheritdoc />
+    public event EventHandler? MonitorsChanged;
+
+    /// <inheritdoc />
     public MonitorInfo GetSelectedMonitor()
     {
         lock (_lock)
@@ -100,9 +103,11 @@ public sealed class DisplayTarget : IDisplayTarget, IDisposable
         }
 
         MonitorInfo? changed = null;
+        bool listChanged;
 
         lock (_lock)
         {
+            listChanged = !_monitors.SequenceEqual(monitors);
             _monitors = monitors;
 
             // An unplugged selection falls back to following the primary display.
@@ -122,6 +127,11 @@ public sealed class DisplayTarget : IDisplayTarget, IDisposable
         if (changed is not null)
         {
             SelectionChanged?.Invoke(this, changed);
+        }
+
+        if (listChanged)
+        {
+            MonitorsChanged?.Invoke(this, EventArgs.Empty);
         }
     }
 

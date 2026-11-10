@@ -235,6 +235,39 @@ public sealed class DisplayTargetTests
         Assert.False(raised);
     }
 
+    // The monitor menu must update when a display is plugged in.
+    [Fact]
+    public void MonitorsChanged_WhenListChanges_RaisesMonitorsChanged()
+    {
+        // Arrange
+        using var target = new DisplayTarget(_source);
+        var raised = 0;
+        target.MonitorsChanged += (_, _) => raised++;
+        var added = new MonitorInfo(@"\\.\DISPLAY4", "Added", new Rectangle(0, 1440, 1920, 1080), IsPrimary: false);
+
+        // Act
+        _source.SetMonitors(_left, _main, _right, added);
+
+        // Assert
+        Assert.Equal(1, raised);
+    }
+
+    // Windows reports display changes that alter nothing; the menu must not be rebuilt for them.
+    [Fact]
+    public void MonitorsChanged_WhenListIsUnchanged_DoesNotRaiseMonitorsChanged()
+    {
+        // Arrange
+        using var target = new DisplayTarget(_source);
+        var raised = false;
+        target.MonitorsChanged += (_, _) => raised = true;
+
+        // Act
+        _source.SetMonitors(_left, _main, _right);
+
+        // Assert
+        Assert.False(raised);
+    }
+
     [Fact]
     public void MonitorsChanged_WhenSourceBrieflyReportsNoDisplays_KeepsLastKnownState()
     {

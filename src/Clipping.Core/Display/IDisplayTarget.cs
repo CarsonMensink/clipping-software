@@ -46,4 +46,18 @@ public interface IDisplayTarget
     /// </para>
     /// </remarks>
     event EventHandler<MonitorInfo>? SelectionChanged;
+
+    /// <summary>
+    /// Raised whenever <see cref="GetAvailableMonitors"/> would return a different list.
+    /// </summary>
+    /// <remarks>
+    /// Raised when a monitor is attached, removed, or reconfigured. Raised after any
+    /// <see cref="SelectionChanged"/> caused by the same change, so handlers see the
+    /// final selection.
+    /// <para>
+    /// May be raised on any thread. Handlers that touch UI must marshal to the UI
+    /// thread themselves.
+    /// </para>
+    /// </remarks>
+    event EventHandler? MonitorsChanged;
 }
