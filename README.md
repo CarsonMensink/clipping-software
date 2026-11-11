@@ -13,6 +13,8 @@ A Windows tray recorder that keeps recent hardware-encoded video in memory and s
 
 `SaveHotkey` keeps the save hotkey registered to `AppSettings.SelectedHotkey` through `IHotkeyService` (`RegisterHotKey` on Windows). `Rebind` is all or nothing: the new combination is registered and saved before the old one is released. Registration or saving failures leave both unchanged. If a settings notification throws after saving, both use the new combination and the exception propagates.
 
+`HotkeyMenu` shows the save hotkey in the tray and rebinds it through `IHotkeyPrompt` (`HotkeyPrompt`, a small WinForms window, on Windows). The hotkey is suspended while the prompt is open, so the prompt can read the current combination too; it is registered again on close unless a new one replaced it.
+
 ## Build and verify
 
 Requires the .NET 10 SDK. Run the app on Windows; cross-building is supported on macOS/Linux.
