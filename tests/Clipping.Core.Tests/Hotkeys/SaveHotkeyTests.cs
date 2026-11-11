@@ -200,6 +200,48 @@ public sealed class SaveHotkeyTests : IDisposable
         Assert.Equal("Ctrl+Shift+S", new JsonSettingsStore(_settingsPath).Settings.SelectedHotkey);
     }
 
+    // A prompt reading keys needs the combination free, and the user needs it back afterwards.
+    [Fact]
+    public void Suspend_ReleasesTheCombinationUntilDisposed()
+    {
+        // Arrange
+        var store = new JsonSettingsStore(_settingsPath);
+        var saves = 0;
+        using var hotkey = new SaveHotkey(_hotkeys, store, _notifications, () => saves++);
+
+        // Act
+        var suspension = hotkey.Suspend();
+        _hotkeys.Press("Alt+P");
+        var registeredWhileSuspended = _hotkeys.Registered;
+        suspension.Dispose();
+        _hotkeys.Press("Alt+P");
+
+        // Assert
+        Assert.Empty(registeredWhileSuspended);
+        Assert.Equal(1, saves);
+        Assert.Equal("Alt+P", hotkey.ActiveCombination);
+    }
+
+    // Another app can claim the combination while it is released; the user must hear about it.
+    [Fact]
+    public void Suspend_WhenCombinationIsTakenBeforeResuming_TellsTheUser()
+    {
+        // Arrange
+        var store = new JsonSettingsStore(_settingsPath);
+        using var hotkey = new SaveHotkey(_hotkeys, store, _notifications, () => { });
+
+        // Act
+        var suspension = hotkey.Suspend();
+        _hotkeys.TakenByAnotherApp.Add("Alt+P");
+        suspension.Dispose();
+
+        // Assert
+        Assert.Null(hotkey.ActiveCombination);
+        var shown = Assert.Single(_notifications.Shown);
+        Assert.Equal(NotificationKind.Error, shown.Kind);
+        Assert.Contains("Alt+P", shown.Message);
+    }
+
     // The combination must go back to Windows when the app exits.
     [Fact]
     public void Dispose_ReleasesTheCombination()

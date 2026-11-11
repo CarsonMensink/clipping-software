@@ -115,6 +115,8 @@ internal static class Program
             log.LogInformation("Press {Combination} to save a clip.", combination);
         }
 
+        _ = new HotkeyMenu(saveHotkey, new HotkeyPrompt(), shell.Menu);
+
         async Task SaveClipAsync()
         {
             var result = await clipSaver.SaveAsync();
