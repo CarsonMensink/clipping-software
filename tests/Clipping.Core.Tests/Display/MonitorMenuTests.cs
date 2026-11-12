@@ -193,7 +193,7 @@ public sealed class MonitorMenuTests : IDisposable
     {
         public List<(string Title, string Message, NotificationKind Kind)> Shown { get; } = [];
 
-        public void Show(string title, string message, NotificationKind kind, Action? onClicked = null) =>
+        public void Show(string title, string message, NotificationKind kind) =>
             Shown.Add((title, message, kind));
     }
 

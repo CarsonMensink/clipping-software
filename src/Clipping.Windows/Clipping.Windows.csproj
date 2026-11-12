@@ -25,9 +25,56 @@
     <ItemGroup>
         <!-- LoggerFactory and ILogger<T>; the file provider is in Clipping.Windows.Support/Logging/. -->
         <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
+        <!-- Hosts the web UI (src/Clipping.UI). -->
+        <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
         <!-- D3D11 and DXGI bindings; pulls in Vortice.DXGI. -->
         <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+        <!-- Composes the web UI into the overlay window with transparency. -->
+        <PackageReference Include="Vortice.DirectComposition" Version="3.8.3" />
         <PackageReference Include="Vortice.MediaFoundation" Version="3.8.3" />
     </ItemGroup>
+
+    <!-- The WebView2 package also references its WPF and WinForms controls. Only Core is used (the
+         overlay hosts WebView2 through composition), and the WPF one conflicts with WindowsBase. -->
+    <Target Name="DropUnusedWebView2Controls" BeforeTargets="ResolveAssemblyReferences">
+        <ItemGroup>
+            <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf' Or '%(Filename)' == 'Microsoft.Web.WebView2.WinForms'" />
+        </ItemGroup>
+    </Target>
+
+    <!-- The web UI: built with npm, then copied to ui\ beside the exe. Set SkipUiBuild=true to
+         build without Node, for example on macOS or Linux; the app then has no overlay pages. -->
+    <PropertyGroup>
+        <UiProjectDir>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', 'Clipping.UI'))</UiProjectDir>
+        <UiDistDir>$(UiProjectDir)dist\</UiDistDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(SkipUiBuild)' != 'true'">
+        <UiSource Include="$(UiProjectDir)src\**\*;$(UiProjectDir)*.html;$(UiProjectDir)package.json;$(UiProjectDir)package-lock.json;$(UiProjectDir)vite.config.ts;$(UiProjectDir)tsconfig.json" />
+        <!-- Lets incremental builds notice UI-only edits. -->
+        <UpToDateCheckInput Include="@(UiSource)" />
+    </ItemGroup>
+
+    <Target Name="InstallUiPackages" Condition="'$(SkipUiBuild)' != 'true'"
+            Inputs="$(UiProjectDir)package-lock.json" Outputs="$(UiProjectDir)node_modules\.package-lock.json">
+        <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(UiProjectDir)" />
+    </Target>
+
+    <Target Name="BuildUi" Condition="'$(SkipUiBuild)' != 'true'" DependsOnTargets="InstallUiPackages"
+            BeforeTargets="BeforeBuild" Inputs="@(UiSource)" Outputs="$(UiDistDir)overlay.html">
+        <Exec Command="npm run build" WorkingDirectory="$(UiProjectDir)" />
+        <!-- Vite rewrites unchanged files with their old timestamps; mark the output fresh. -->
+        <Touch Files="$(UiDistDir)overlay.html" />
+    </Target>
+
+    <Target Name="IncludeUi" Condition="'$(SkipUiBuild)' != 'true'" AfterTargets="BuildUi" BeforeTargets="BeforeBuild">
+        <ItemGroup>
+            <_UiFile Include="$(UiDistDir)**\*" />
+            <ContentWithTargetPath Include="@(_UiFile)"
+                                   TargetPath="ui\%(_UiFile.RecursiveDir)%(_UiFile.Filename)%(_UiFile.Extension)"
+                                   CopyToOutputDirectory="PreserveNewest"
+                                   CopyToPublishDirectory="PreserveNewest" />
+        </ItemGroup>
+    </Target>
 
 </Project>
