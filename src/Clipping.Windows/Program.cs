@@ -49,8 +49,13 @@ internal static class Program
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => log.LogError(e.Exception, "UI thread exception; continuing.");
 
+        using var monitorSource = new ScreenMonitorSource();
+        using var displayTarget = new DisplayTarget(monitorSource);
+
         // Disposed after the pipeline below has drained, so the tray icon goes last.
-        using var shell = new TrayShell();
+        // Notifications appear on the monitor being recorded.
+        using var shell = new TrayShell(
+            () => displayTarget.GetSelectedMonitor().Bounds, Path.Combine(appData, "WebView2"), loggerFactory);
         singleInstance.OnSecondLaunch(() => shell.Notifications.Show(
             "Clipping is already running", "Find it in the notification area.", NotificationKind.Info));
         shell.Menu.Add("Open log folder", MenuGroup.App, () =>
@@ -60,9 +65,6 @@ internal static class Program
         });
 
         var store = new JsonSettingsStore(Path.Combine(appData, "settings.json"));
-
-        using var monitorSource = new ScreenMonitorSource();
-        using var displayTarget = new DisplayTarget(monitorSource);
 
         // Restores the saved monitor, so it must exist before capture starts below.
         using var monitorMenu = new MonitorMenu(displayTarget, store, shell.Menu, shell.Notifications);
@@ -107,8 +109,9 @@ internal static class Program
         // Created on this thread, which runs the message loop, so hotkey presses are delivered here.
         using var hotkeys = new HotkeyService();
 
+        var saveNotifier = new ClipSaveNotifier(shell.Notifications);
+
         // Saving runs asynchronously so a hotkey press never blocks the message loop.
-        // TEMP: #12 owns the save notification.
         using var saveHotkey = new SaveHotkey(hotkeys, store, shell.Notifications, () => _ = SaveClipAsync());
         if (saveHotkey.ActiveCombination is { } combination)
         {
@@ -119,16 +122,7 @@ internal static class Program
 
         async Task SaveClipAsync()
         {
-            var result = await clipSaver.SaveAsync();
-            if (result.Succeeded)
-            {
-                shell.Notifications.Show(
-                    "TEMP: clip saved", $"{result.Duration.TotalSeconds:0.0} s to {result.Path}", NotificationKind.Info);
-            }
-            else
-            {
-                shell.Notifications.Show("TEMP: save failed", result.Error!, NotificationKind.Error);
-            }
+            saveNotifier.Notify(await clipSaver.SaveAsync());
         }
 
         // Pumps Windows messages, so display changes and hotkeys are delivered, until Exit is chosen.

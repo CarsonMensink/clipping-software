@@ -1,0 +1,56 @@
+html,
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+}
+
+.card {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 360px;
+  box-sizing: border-box;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border-left: 4px solid #76b900;
+  background: rgba(24, 24, 24, 0.92);
+  color: #fff;
+  animation: card-in 200ms ease-out both;
+}
+
+.card-error {
+  border-left-color: #e5484d;
+}
+
+.card-leaving {
+  animation: card-out 300ms ease-in both;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.card-message {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #d0d0d0;
+  overflow-wrap: anywhere;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes card-out {
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
