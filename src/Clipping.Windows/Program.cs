@@ -1,3 +1,4 @@
+using Clipping.Core.Audio;
 using Clipping.Core.Capture;
 using Clipping.Core.Clips;
 using Clipping.Core.Display;
@@ -5,6 +6,7 @@ using Clipping.Core.Hotkeys;
 using System.Diagnostics;
 using Clipping.Core.Settings;
 using Clipping.Core.Shell;
+using Clipping.Windows.Audio;
 using Clipping.Windows.Capture;
 using Clipping.Windows.Clips;
 using Clipping.Windows.Display;
@@ -104,7 +106,10 @@ internal static class Program
         using var clipSources = new ClipSourceTracker(
             new CapturedMonitorProbe(displayTarget), log: loggerFactory.CreateLogger<ClipSourceTracker>());
 
-        var clipSaver = new ClipSaver(recording.Buffer, new Mp4ClipWriter(), store, clipSources);
+        // System audio, kept beside the video and cut to match it when a clip is saved.
+        using var audio = new AudioRecording(new LoopbackAudioSource(loggerFactory.CreateLogger<LoopbackAudioSource>()), store);
+
+        var clipSaver = new ClipSaver(recording.Buffer, new Mp4ClipWriter(new AacEncoder()), store, clipSources, audio: audio);
 
         // Created on this thread, which runs the message loop, so hotkey presses are delivered here.
         using var hotkeys = new HotkeyService();

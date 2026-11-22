@@ -22,6 +22,7 @@ public sealed class ClipSaver
     private readonly ISettingsStore _settings;
     private readonly IClipSourceResolver _sources;
     private readonly TimeProvider _time;
+    private readonly IClipAudio? _audio;
     private readonly SemaphoreSlim _oneAtATime = new(1);
 
     /// <param name="buffer">Where the video comes from.</param>
@@ -29,7 +30,14 @@ public sealed class ClipSaver
     /// <param name="settings">Supplies the output folder.</param>
     /// <param name="sources">Says which application the clip was recorded from.</param>
     /// <param name="timeProvider">Dates the file name. Defaults to the system clock.</param>
-    public ClipSaver(IClipBuffer buffer, IClipWriter writer, ISettingsStore settings, IClipSourceResolver sources, TimeProvider? timeProvider = null)
+    /// <param name="audio">Supplies each clip's audio; <see langword="null"/> for video-only clips.</param>
+    public ClipSaver(
+        IClipBuffer buffer,
+        IClipWriter writer,
+        ISettingsStore settings,
+        IClipSourceResolver sources,
+        TimeProvider? timeProvider = null,
+        IClipAudio? audio = null)
     {
         ArgumentNullException.ThrowIfNull(buffer);
         ArgumentNullException.ThrowIfNull(writer);
@@ -41,6 +49,7 @@ public sealed class ClipSaver
         _settings = settings;
         _sources = sources;
         _time = timeProvider ?? TimeProvider.System;
+        _audio = audio;
     }
 
     /// <summary>
@@ -55,7 +64,8 @@ public sealed class ClipSaver
     /// </summary>
     /// <remarks>
     /// The snapshot and its application are taken before waiting for an earlier save, so the clip
-    /// covers the moment this was called.
+    /// covers the moment this was called. Its audio is cut to the same stretch, so it lines up
+    /// with the video whatever else is saved meanwhile.
     /// Cancelling after that point discards the video taken, since the buffer is already empty.
     /// </remarks>
     public async Task<ClipSaveResult> SaveAsync(CancellationToken cancellationToken = default)
@@ -68,14 +78,25 @@ public sealed class ClipSaver
 
         var source = _sources.Resolve(clip.Start, clip.End);
 
+        // Started now, so audio still arriving is collected while an earlier save finishes.
+        var audio = _audio?.ReadAsync(clip.Start, clip.End, cancellationToken);
+
         await _oneAtATime.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (audio is not null)
+            {
+                clip = clip with { Audio = await audio.ConfigureAwait(false) };
+            }
+
             var directory = ClipFolders.For(OutputDirectory, source);
 
             var path = ClipFileNames.Next(directory, _time.GetLocalNow().DateTime, _writer.Extension);
-            await _writer.WriteAsync(clip, path, cancellationToken).ConfigureAwait(false);
-            return ClipSaveResult.Saved(path, clip.Duration);
+            var written = await _writer.WriteAsync(clip, path, cancellationToken).ConfigureAwait(false);
+            return ClipSaveResult.Saved(path, clip.Duration) with
+            {
+                Warning = written.AudioError is { } error ? $"Saved without audio: {error}" : null,
+            };
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
@@ -101,6 +122,12 @@ public sealed record ClipSaveResult(string? Path, TimeSpan Duration, string? Err
     /// Whether the clip was written.
     /// </summary>
     public bool Succeeded => Path is not null;
+
+    /// <summary>
+    /// Something left out of a clip that was still saved, such as its audio, in words a user
+    /// can act on.
+    /// </summary>
+    public string? Warning { get; init; }
 
     internal static ClipSaveResult Saved(string path, TimeSpan duration) => new(path, duration, null);
 

@@ -1,3 +1,4 @@
+using Clipping.Core.Audio;
 using Clipping.Core.Clips;
 using Clipping.Core.Encoding;
 using Clipping.Core.Settings;
@@ -184,6 +185,58 @@ public sealed class ClipSaverTests : IDisposable
         Assert.Single(_writer.Written);
     }
 
+    // Saved clips carry audio cut to exactly the video they contain, so the two stay in sync (#9).
+    [Fact]
+    public async Task SaveAsync_WithAudio_WritesAudioCutToTheClipsVideo()
+    {
+        // Arrange
+        FillBuffer(seconds: 2);
+        var track = new AudioTrack(AudioFormat.Default, new short[2 * 48_000 * 2]);
+        var audio = new FakeAudio(track);
+        var saver = new ClipSaver(_buffer, _writer, _settings, _sources, _time, audio);
+
+        // Act
+        var result = await saver.SaveAsync();
+
+        // Assert
+        Assert.True(result.Succeeded);
+        var written = Assert.Single(_writer.Written);
+        Assert.Same(track, written.Clip.Audio);
+        Assert.Equal((written.Clip.Start, written.Clip.End), audio.AskedFor);
+    }
+
+    [Fact]
+    public async Task SaveAsync_WhenAudioIsOff_WritesVideoOnly()
+    {
+        // Arrange
+        FillBuffer();
+        var saver = new ClipSaver(_buffer, _writer, _settings, _sources, _time, new FakeAudio(null));
+
+        // Act
+        var result = await saver.SaveAsync();
+
+        // Assert
+        Assert.True(result.Succeeded);
+        Assert.Null(Assert.Single(_writer.Written).Clip.Audio);
+    }
+
+    // A clip whose audio couldn't be written is still saved, and the user is told what's missing.
+    [Fact]
+    public async Task SaveAsync_WhenWriterLeavesAudioOut_SucceedsWithAWarning()
+    {
+        // Arrange
+        FillBuffer();
+        _writer.Result = new ClipWriteResult("the audio encoder isn't available.");
+
+        // Act
+        var result = await CreateSaver().SaveAsync();
+
+        // Assert
+        Assert.True(result.Succeeded);
+        Assert.NotNull(result.Warning);
+        Assert.Contains("the audio encoder isn't available.", result.Warning);
+    }
+
     [Fact]
     public void OutputDirectory_WhenNotSet_IsVideosFolder()
     {
@@ -214,11 +267,13 @@ public sealed class ClipSaverTests : IDisposable
 
         public TimeSpan Delay { get; set; }
 
+        public ClipWriteResult Result { get; set; } = ClipWriteResult.Complete;
+
         public int MaxConcurrent { get; private set; }
 
         public string Extension => ".mp4";
 
-        public async Task WriteAsync(ClipSnapshot clip, string path, CancellationToken cancellationToken = default)
+        public async Task<ClipWriteResult> WriteAsync(ClipSnapshot clip, string path, CancellationToken cancellationToken = default)
         {
             MaxConcurrent = Math.Max(MaxConcurrent, Interlocked.Increment(ref _active));
             try
@@ -235,11 +290,24 @@ public sealed class ClipSaverTests : IDisposable
                 {
                     Written.Add((clip, path));
                 }
+
+                return Result;
             }
             finally
             {
                 Interlocked.Decrement(ref _active);
             }
+        }
+    }
+
+    private sealed class FakeAudio(AudioTrack? track) : IClipAudio
+    {
+        public (TimeSpan Start, TimeSpan End)? AskedFor { get; private set; }
+
+        public Task<AudioTrack?> ReadAsync(TimeSpan start, TimeSpan end, CancellationToken cancellationToken = default)
+        {
+            AskedFor = (start, end);
+            return Task.FromResult(track);
         }
     }
 

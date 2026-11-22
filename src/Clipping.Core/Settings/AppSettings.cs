@@ -64,6 +64,15 @@ public sealed record AppSettings
     /// <value>Defaults to <c>60</c>.</value>
     public int FrameRate { get; init; } = 60;
 
+    /// <summary>
+    /// Whether clips include what the computer was playing.
+    /// </summary>
+    /// <remarks>
+    /// Turning it off stops audio capture; clips saved afterwards have video only.
+    /// </remarks>
+    /// <value>Defaults to <see langword="true"/>.</value>
+    public bool AudioEnabled { get; init; } = true;
+
     // Reject invalid edits before persistence so the active recorder never receives unusable limits.
     internal void Validate()
     {

@@ -27,6 +27,7 @@
         <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.14" />
         <!-- Hosts the web UI (src/Clipping.UI). -->
         <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+        <PackageReference Include="NAudio.Wasapi" Version="3.3.0" />
         <!-- D3D11 and DXGI bindings; pulls in Vortice.DXGI. -->
         <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
         <!-- Composes the web UI into the overlay window with transparency. -->
@@ -55,13 +56,11 @@
         <UpToDateCheckInput Include="@(UiSource)" />
     </ItemGroup>
 
-    <Target Name="InstallUiPackages" Condition="'$(SkipUiBuild)' != 'true'"
-            Inputs="$(UiProjectDir)package-lock.json" Outputs="$(UiProjectDir)node_modules\.package-lock.json">
+    <Target Name="InstallUiPackages" Condition="'$(SkipUiBuild)' != 'true'" Inputs="$(UiProjectDir)package-lock.json" Outputs="$(UiProjectDir)node_modules\.package-lock.json">
         <Exec Command="npm ci --no-audit --no-fund" WorkingDirectory="$(UiProjectDir)" />
     </Target>
 
-    <Target Name="BuildUi" Condition="'$(SkipUiBuild)' != 'true'" DependsOnTargets="InstallUiPackages"
-            BeforeTargets="BeforeBuild" Inputs="@(UiSource)" Outputs="$(UiDistDir)overlay.html">
+    <Target Name="BuildUi" Condition="'$(SkipUiBuild)' != 'true'" DependsOnTargets="InstallUiPackages" BeforeTargets="BeforeBuild" Inputs="@(UiSource)" Outputs="$(UiDistDir)overlay.html">
         <Exec Command="npm run build" WorkingDirectory="$(UiProjectDir)" />
         <!-- Vite rewrites unchanged files with their old timestamps; mark the output fresh. -->
         <Touch Files="$(UiDistDir)overlay.html" />
@@ -70,10 +69,7 @@
     <Target Name="IncludeUi" Condition="'$(SkipUiBuild)' != 'true'" AfterTargets="BuildUi" BeforeTargets="BeforeBuild">
         <ItemGroup>
             <_UiFile Include="$(UiDistDir)**\*" />
-            <ContentWithTargetPath Include="@(_UiFile)"
-                                   TargetPath="ui\%(_UiFile.RecursiveDir)%(_UiFile.Filename)%(_UiFile.Extension)"
-                                   CopyToOutputDirectory="PreserveNewest"
-                                   CopyToPublishDirectory="PreserveNewest" />
+            <ContentWithTargetPath Include="@(_UiFile)" TargetPath="ui\%(_UiFile.RecursiveDir)%(_UiFile.Filename)%(_UiFile.Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
         </ItemGroup>
     </Target>
 
