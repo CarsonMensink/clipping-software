@@ -22,7 +22,12 @@ public sealed class ClipSaveNotifier
     {
         ArgumentNullException.ThrowIfNull(result);
 
-        if (result.Succeeded)
+        if (result is { Succeeded: true, Warning: { } warning })
+        {
+            // Still saved, but missing something the user expects, so it reads as a problem.
+            _notifications.Show("Clip saved", $"{Describe(result.Path!, result.Duration)}. {warning}", NotificationKind.Error);
+        }
+        else if (result.Succeeded)
         {
             _notifications.Show("Clip saved", Describe(result.Path!, result.Duration), NotificationKind.Info);
         }

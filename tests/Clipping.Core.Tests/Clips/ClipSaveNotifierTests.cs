@@ -42,6 +42,26 @@ public sealed class ClipSaveNotifierTests
         Assert.Contains("The disk is full.", message);
     }
 
+    // A clip saved without its audio must not look like a complete save.
+    [Fact]
+    public void Notify_SavedClipWithWarning_ShowsErrorNamingTheFileAndWhatIsMissing()
+    {
+        // Arrange
+        var notifications = new FakeNotifications();
+        var notifier = new ClipSaveNotifier(notifications);
+        var path = Path.Combine("C:", "Videos", "Cyberpunk 2077", "2026-10-31 22-16-05.mp4");
+        var result = ClipSaveResult.Saved(path, TimeSpan.FromSeconds(30)) with { Warning = "Saved without audio." };
+
+        // Act
+        notifier.Notify(result);
+
+        // Assert
+        var (_, message, kind) = Assert.Single(notifications.Shown);
+        Assert.Equal(NotificationKind.Error, kind);
+        Assert.Contains("2026-10-31 22-16-05.mp4", message);
+        Assert.Contains("Saved without audio.", message);
+    }
+
     private sealed class FakeNotifications : INotificationService
     {
         public List<(string Title, string Message, NotificationKind Kind)> Shown { get; } = [];

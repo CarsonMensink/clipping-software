@@ -1,3 +1,4 @@
+using Clipping.Core.Audio;
 using Clipping.Core.Encoding;
 
 namespace Clipping.Core.Clips;
@@ -48,6 +49,12 @@ public interface IClipBuffer
 /// <param name="Samples">Encoded frames, starting on a keyframe; empty if nothing was buffered.</param>
 public sealed record ClipSnapshot(IReadOnlyList<EncodedSample> Samples)
 {
+    /// <summary>
+    /// The audio to go with the video, starting at <see cref="Start"/> and lasting
+    /// <see cref="Duration"/>; <see langword="null"/> for a clip without audio.
+    /// </summary>
+    public AudioTrack? Audio { get; init; }
+
     /// <summary>
     /// When the first frame starts; zero if the snapshot is empty.
     /// </summary>
