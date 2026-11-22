@@ -1,11 +1,13 @@
 using System.Reflection;
 using Clipping.Core.Shell;
+using Clipping.Windows.Shell.Overlay;
+using Microsoft.Extensions.Logging;
 
 namespace Clipping.Windows.Shell;
 
 /// <summary>
-/// Hosts the application in the notification area: the tray icon, its menu, notifications,
-/// and the hidden window whose thread runs the message loop.
+/// Hosts the application in the notification area: the tray icon, its menu, the on-screen
+/// overlay that shows notifications, and the hidden window whose thread runs the message loop.
 /// </summary>
 /// <remarks>
 /// Create, run, and dispose it on one STA thread. Features receive only the menu or
@@ -24,8 +26,12 @@ internal sealed class TrayShell : IDisposable
     private readonly MessageWindow _window;
     private readonly ContextMenuStrip _menuStrip;
     private readonly NotifyIcon _icon;
+    private readonly OverlayNotifications _overlay;
 
-    public TrayShell()
+    /// <param name="overlayMonitor">The monitor to show notifications on, in virtual-desktop pixels.</param>
+    /// <param name="webViewDataFolder">Where the web UI keeps its browser profile.</param>
+    /// <param name="loggerFactory">Creates the loggers for the shell's parts.</param>
+    public TrayShell(Func<Rectangle> overlayMonitor, string webViewDataFolder, ILoggerFactory loggerFactory)
     {
         _window = new MessageWindow();
         _menuStrip = new ContextMenuStrip();
@@ -41,14 +47,15 @@ internal sealed class TrayShell : IDisposable
         };
         _icon.MouseClick += OnIconClicked;
 
-        Notifications = new BalloonNotifications(_icon, _window);
+        _overlay = new OverlayNotifications(
+            _window, overlayMonitor, webViewDataFolder, loggerFactory.CreateLogger<OverlayNotifications>());
 
         Menu.Add("Exit", ExitGroup, RequestExit);
     }
 
     public ITrayMenu Menu { get; }
 
-    public INotificationService Notifications { get; }
+    public INotificationService Notifications => _overlay;
 
     // The recorder stays alive until the tray Exit action ends this message loop.
     public void Run() => Application.Run();
@@ -62,6 +69,8 @@ internal sealed class TrayShell : IDisposable
     /// </summary>
     public void Dispose()
     {
+        _overlay.Dispose();
+
         // Without this, the icon lingers in the tray until the mouse passes over it.
         _icon.Visible = false;
         _icon.Dispose();

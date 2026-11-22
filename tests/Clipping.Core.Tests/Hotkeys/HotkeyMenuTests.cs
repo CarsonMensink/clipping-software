@@ -253,7 +253,7 @@ public sealed class HotkeyMenuTests : IDisposable
 
     private sealed class FakeNotifications : INotificationService
     {
-        public void Show(string title, string message, NotificationKind kind, Action? onClicked = null)
+        public void Show(string title, string message, NotificationKind kind)
         {
         }
     }
